@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The API and web packages import @rntps/shared from dist, so it builds first.
+      - run: npm run build -w @rntps/shared
+
+      - run: npm run typecheck
+      - run: npm run lint
+
+      # Unit and HTTP integration tests use mongodb-memory-server, so no database
+      # service is needed. Test-time config comes from apps/api/vitest.config.ts, which
+      # is why CI can run without a .env file.
+      - run: npm test
+
+      - run: npm run build
+
+  # End-to-end tests need the full stack (web + API + a database), so they are not part
+  # of the standard check. Run them locally with `npm run test:e2e`, or point
+  # E2E_BASE_URL at a Netlify deploy preview and flip `if: false` below.
+  e2e:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run test:e2e
+        env:
+          E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}

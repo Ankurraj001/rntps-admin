@@ -1,0 +1,747 @@
+# RNTPS Admin
+
+School management system for RNTPS — student records, fees and attendance for ~200 students.
+
+**Status: complete.** Students, attendance, fees, WhatsApp fee reminders, reports and role-based
+auth are all built, tested and deployable.
+
+## Stack
+
+| Layer | Choice |
+|---|---|
+| Web | React 19 · Vite · TypeScript · TanStack Query · Tailwind 4 · react-hook-form |
+| API | Node 22 · Express 5 · TypeScript · Mongoose 8 · zod · pino |
+| Database | MongoDB (local `mongod` for dev, Atlas for production) |
+| Tests | Vitest · supertest · mongodb-memory-server |
+
+A `packages/shared` workspace holds the zod schemas used by **both** sides, so the API contract is
+typed end to end without a codegen step.
+
+## Prerequisites
+
+- Node 22+
+- A MongoDB database — either MongoDB Atlas (recommended, works for dev too) or a local `mongod`
+
+No Docker and no replica set are required: every write in this system targets a single document, so
+a standalone `mongod` is enough if you prefer running locally.
+
+### Option A — MongoDB Atlas (recommended)
+
+1. Create a free **M0** cluster at [cloud.mongodb.com](https://cloud.mongodb.com). Pick the region
+   closest to the school (`ap-south-1` Mumbai for India) — this is permanent on M0.
+2. **Database Access** → add a user with **`readWrite` on the `rntps` database only**, not
+   `atlasAdmin`.
+3. **Network Access** → add your current IP. (Timeouts later usually mean your IP changed.)
+4. **Connect → Drivers → Node.js** and copy the string. Two edits are required:
+   - **Add the database name** before the `?`: `.../rntps?retryWrites=true...`. Atlas omits it, and
+     without it Mongoose silently writes to a database called `test`.
+   - **URL-encode the password** if it contains `@ : / ? # [ ] %`:
+     `node -e "console.log(encodeURIComponent('your-password'))"`
+
+### Option B — local mongod
+
+Homebrew's MongoDB lives in a third-party tap, which recent Homebrew versions refuse to load until
+you explicitly trust it:
+
+```bash
+brew trust mongodb/brew          # one-time, review the tap first
+brew services start mongodb-community
+```
+
+To avoid changing your Homebrew trust settings, run `mongod` directly instead:
+
+```bash
+mkdir -p ~/.rntps/mongo-data
+mongod --dbpath ~/.rntps/mongo-data --bind_ip 127.0.0.1 --port 27017
+```
+
+## Getting started
+
+```bash
+npm install
+npm run build -w @rntps/shared   # API and web import this package from dist
+cp .env.example apps/api/.env    # then adjust if needed
+npm run seed:settings            # creates the singleton settings document
+npm run dev                      # api on :4000, web on :5173
+```
+
+Check the connection with `curl localhost:4000/readyz` — it returns
+`{"status":"ready","database":true}` once Mongo answers. A `503` is almost always one of:
+`Authentication failed` (password wrong or not URL-encoded), `Could not connect to any servers`
+(IP not allowlisted in Atlas), or an SRV/DNS failure (some corporate networks block SRV lookups).
+
+Open http://localhost:5173.
+
+`seed:settings` is safe to re-run — an existing settings document is left untouched so the ID
+counters are never reset.
+
+## Scripts
+
+| Command | Does |
+|---|---|
+| `npm run dev` | Runs the API and web dev servers together |
+| `npm run dev:api` / `npm run dev:web` | Runs one side only |
+| `npm test` | Vitest unit + HTTP integration tests |
+| `npm run typecheck` | Typechecks every workspace |
+| `npm run lint` | ESLint across the repo |
+| `npm run build` | Builds shared → api → web |
+| `npm run seed:settings` | Creates the settings singleton |
+| `npm run seed:admin -- "Name" email@school` | Creates an admin and prints a one-time password |
+| `npm run reset:password -- email@school` | Break-glass password reset when nobody can sign in |
+| `npm run mail:test -- you@example.com` | Verifies SMTP settings before anyone relies on them |
+| `npm run test:e2e` | Playwright end-to-end tests against a running stack |
+| `npm run indexes:sync` | Builds the schema indexes — **required deploy step**, see below |
+| `npm run migrate:rupees --workspace @rntps/api` | One-off paise → rupees conversion; `--dry-run` reports without writing |
+
+
+## Testing
+
+```bash
+npm test           # 365 unit + HTTP integration tests (mongodb-memory-server, no external DB)
+npm run test:e2e   # 10 Playwright end-to-end tests against a running stack
+```
+
+The API suite covers the money and access paths in depth: invoice double-billing, concurrent
+payments, overpayment, reversal arithmetic, refresh-token rotation and reuse detection, account
+lockout across containers, and every teacher-versus-admin boundary.
+
+E2E needs both dev servers running and an admin account, supplied explicitly — there is no default,
+because a hard-coded account would mean a live admin with a known password sitting in whatever
+database the suite points at:
+
+```bash
+npm run seed:admin -- "E2E Bot" e2e@rntps.local     # prints a temporary password
+# sign in once to set a real password, then:
+E2E_ADMIN_EMAIL=e2e@rntps.local E2E_ADMIN_PASSWORD=... npm run test:e2e
+```
+
+Prefer a staging database, and deactivate the account when finished. `E2E_BASE_URL` points the suite
+at a Netlify preview instead of localhost.
+
+**A known rough edge:** roughly one full API run in five used to see a single test fail, with the
+culprit moving between files while every file passed 10+ consecutive runs in isolation. That points at
+the in-memory mongod's connect/drop/disconnect lifecycle rather than at the code, so
+`apps/api/vitest.config.ts` sets `retry: 1`. It is a mitigation, not a fix — if something starts
+failing on the retry as well, treat it as a real defect rather than raising the retry count.
+
+Three things worth knowing if you extend the E2E suite — each cost real debugging time:
+
+- **It shares one sign-in per spec file.** Signing in per test exceeds the real `/auth/login` rate
+  limit (10 per minute per IP), a safeguard worth keeping rather than loosening for tests.
+- **Never aim a deliberate bad-password test at the shared account.** Five failures lock it for
+  fifteen minutes, and every other test then fails for an unrelated-looking reason. Use an address
+  that does not exist.
+- **`page.goto()` resolves before React mounts.** Wait for a control
+  (`waitFor({ state: 'visible' })`) before reading its contents; otherwise a locator returns nothing
+  and the test can silently skip itself.
+
+## Architecture notes
+
+**Meaningful primary keys.** Most collections use a readable string `_id` rather than an ObjectId,
+which doubles as the uniqueness constraint:
+
+| Collection | `_id` | Example |
+|---|---|---|
+| `students` | the studentId | `RNTPS-26-001` |
+| `invoices` *(phase 4)* | `{studentId}:{period}` | `RNTPS-26-001:2026-08` |
+| `attendance` *(phase 3)* | `{studentId}:{dateKey}` | `RNTPS-26-001:2026-08-25` |
+| `feeStructures` *(phase 4)* | `{classCode}:{year}` | `5:2026-27` |
+| `settings` | fixed literal | `app` |
+| `users` *(phase 2)*, `notifications`, `auditLogs` | ObjectId | — |
+
+Keying an invoice by student-and-period makes double-billing structurally impossible; keying
+attendance by student-and-day does the same for double-marking. Neither needs an application check.
+
+**Siblings are a shared `familyId`,** not a duplicated list on each student. Linking a sibling during
+onboarding makes the new record join that family and pre-fills the guardian and address details. Fee
+reminders then group by family, so a parent with three children gets one message rather than three.
+
+**Money is integer rupees,** never a float. `₹1,800` is stored as `1800` — the same number the admin
+typed, all the way from the form to the database, with no conversion step anywhere.
+
+*Integer* is the load-bearing word. School fees are always whole rupees, so paise bought nothing but
+arithmetic; floats would still misbehave (`0.1 + 0.2 !== 0.3`) and the error compounds across a year
+of invoices and part-payments. So `.int()` guards every amount at the API edge, and a fractional
+amount is **rejected rather than truncated** — a receipt saying ₹500 for a ₹500.75 payment is a
+reconciliation problem discovered months later. `formatINR()` in `packages/shared/src/money.ts` is
+display only.
+
+Two consequences worth knowing:
+
+- A **percentage concession rounds to the nearest rupee**, and a half-rupee remainder goes the
+  student's way: 10% of ₹1,255 is ₹126, not ₹125.50.
+- A **flat concession must be a whole number of rupees.** A percentage may be fractional, because
+  12.5% is a real thing a school offers.
+
+Amounts already stored in paise are converted by `npm run migrate:rupees --workspace @rntps/api`
+(add `--dry-run` to see the report first). It is idempotent — it selects documents by the presence of
+the old field, so a second run finds nothing — and it lists any amount that was not a whole number of
+rupees rather than silently absorbing the remainder.
+
+**Days are `dateKey` strings** (`"YYYY-MM-DD"`) computed in Asia/Kolkata. Comparing raw `Date`
+objects across timezones produces off-by-one-day attendance bugs.
+
+**Single-document writes.** Payments will be embedded in their invoice, so recording a payment is one
+atomic update pipeline rather than a multi-document transaction. This is what removes the replica-set
+requirement.
+
+**Classes** are the fixed list `NURSERY, LKG, UKG, 1…8` with no sections — a shared constant, not a
+collection.
+
+
+## Authentication
+
+**Access token in memory, refresh token in an httpOnly cookie.** The access token is a 15-minute
+JWT held in a JavaScript variable — never `localStorage`, which any XSS could read and which would
+outlive the tab. The long-lived credential is an `httpOnly; Secure; SameSite=Strict` cookie scoped to
+`/api/v1/auth`, which JavaScript cannot touch. A page reload starts with no access token and
+exchanges the cookie for a fresh one.
+
+**Refresh tokens rotate, with reuse detection.** Each refresh issues a new token and marks the old
+one rotated. Presenting an already-rotated token means it was captured and replayed, so the whole
+token *family* is revoked — signing out the legitimate user too, which is the right response to a
+stolen session.
+
+There is a **10-second grace window** on that check. Two browser tabs bootstrapping at once (or React
+StrictMode double-invoking the effect in development) all send the same cookie before any of them has
+the new one; without the window, users would be signed out on nearly every page load. The client also
+funnels every refresh — bootstrap, scheduled renewal, and the 401 retry — through one single-flight
+promise, so the grace path is rarely needed.
+
+**Passwords use `scrypt` from `node:crypto`**, not argon2 or bcrypt. Both of those are native addons,
+and native addons inside a bundled serverless function are a reliable source of cold-start failures.
+Parameters are the OWASP minimum (N = 2¹⁷, r = 8, p = 1, ~200ms) and are stored *with* each hash, so
+they can be raised later without invalidating existing passwords — a weaker hash is upgraded
+transparently at next sign-in.
+
+**Brute-force protection is database-backed account lockout**, not IP rate limiting: 5 failed attempts
+locks the account for 15 minutes. This is deliberate. On Netlify each warm container has its own
+in-memory rate-limit counter, so N containers would allow N times the limit — but every container
+shares the database. The per-IP limiter in front of `/auth/login` is a cheap extra layer, not the
+real defence.
+
+**Login errors are deliberately identical** for unknown email, wrong password and deactivated
+account, and an unknown email still pays the cost of a hash comparison. Otherwise anyone could
+enumerate which staff addresses exist, by response body or by timing.
+
+**Roles.** `ADMIN` reaches everything. `TEACHER` gets a read-only student directory and (from phase 3)
+attendance for their assigned classes only. `requireClassAccess` reads the class from params, query
+*or* body, so a teacher cannot reach another class by moving the parameter. Whole-family guardian
+contact details are admin-only. The frontend hides what a teacher cannot do, but the API enforces it
+independently — the UI guard is convenience, not security.
+
+**Forgotten password.** `POST /auth/forgot-password` emails a single-use link that expires in an
+hour. The token is 256 bits of randomness stored only as a SHA-256 hash, so a database leak yields
+nothing replayable. The endpoint always answers `204` — telling the caller "no such account" would
+turn it into a staff-directory oracle — and is rate limited to 5 requests per 15 minutes per IP, since
+it both sends mail and could otherwise be used to probe addresses. Completing a reset consumes the
+token, clears any lockout and revokes every existing session.
+
+**With no SMTP configured, self-service reset is switched off rather than faked.** This matters: the
+page used to accept an address, mint a token and say "check your email" on a server that could not
+send one, leaving the user waiting for a message that never came. Now:
+
+- `GET /auth/config` (public) reports `passwordResetByEmail`. It reveals only whether the server can
+  send mail at all — never whether an account exists — so it gives an attacker nothing.
+- The forgotten-password page asks first. With email unavailable it shows the recovery path that
+  actually works — **ask an administrator**, who can set a new password from Settings → Users — instead
+  of a form that leads nowhere.
+- `POST /auth/forgot-password` mints no token in that state. Storing a reset hash nobody can receive
+  leaves a live credential-reset path in the database for no benefit.
+
+In development with no credentials the link is still written to the server log, which is what a
+developer needs. `npm run migrate:rupees --workspace @rntps/api` clears any expired reset tokens left
+behind by the old behaviour.
+
+**Readable passwords (`STORE_PLAINTEXT_PASSWORDS`).** Off by default. When on, a readable copy of
+each password is kept alongside the hash so an admin can look one up and tell a teacher what theirs
+is, via **Users → Password**. Authentication always verifies against the hash — the readable copy is
+only ever read, never checked — so switching the flag off breaks nothing, and copies clear as
+passwords change.
+
+Reads go through a dedicated admin-only endpoint rather than the users list, and each one writes a
+`user.password-viewed` audit entry recording who read whose password. The password itself is scrubbed
+from that entry.
+
+The cost, stated plainly: with this on, anyone who obtains the database — or just the connection
+string, which Netlify's non-static function IPs mean is reachable from anywhere — has every staff
+password in usable form, and staff reuse passwords elsewhere. **Users → Reset** issues a fresh
+password in one click and needs none of this, so leave the flag off unless reading old passwords back
+is genuinely required.
+
+**First sign-in.** `npm run seed:admin` prints a one-time password. Any user with a temporary password
+is authenticated but confined to `/auth/me`, `/auth/change-password` and `/auth/logout` until they set
+their own, so a handed-over password cannot be used to browse student records indefinitely.
+
+## Features
+
+**Students** — onboarding with sibling linking (shared `familyId`, guardian and address pre-filled
+from the sibling), searchable directory, editing from either the list row or the student page, status
+transitions (records are never deleted), year-rollover promotion with class 8 graduating to alumni.
+
+Each student can carry an **Aadhaar number** and an **APAAR ID / PEN**, both optional and unique
+across the school, and both searchable — so a student can be found from a government form. Aadhaar is
+validated against its Verhoeff check digit, which catches every single-digit typo and every
+transposition of adjacent digits; twelve digits copied off a card by hand get both wrong regularly.
+APAAR/PEN validation is deliberately loose (8–20 alphanumeric), because the format varies by state and
+by whether the school is on APAAR or an older UDISE+ scheme.
+
+Emptying an identifier on edit *clears* it, rather than leaving the old value in place. That matters
+because these fields are unique: a number entered against the wrong student would otherwise
+permanently block the student it actually belongs to.
+
+Aadhaar is stored and displayed in full, by choice. UIDAI's guidance is to mask to the last four
+digits outside authentication contexts; `maskAadhaar()` in `packages/shared/src/identifiers.ts` is
+there if you want to switch display over later.
+
+Edits are partial and validated the same way as onboarding. The studentId and the family link are
+immutable afterwards — those keys are stripped from an update rather than applied, since the studentId
+is the primary key and appears on issued receipts.
+
+**Attendance** — one record per student per day, keyed `studentId:dateKey` so double-marking is
+impossible. Three states only — **present, absent, holiday** — and **Sundays are holidays
+automatically**. Keyboard-driven roster (everyone starts Present; P/A/H set a status and advance),
+monthly grid, per-student history, below-threshold defaulter report, and a dashboard nudge for classes
+not yet marked today.
+
+**Fees** — monthly fee heads per class (including transport-only heads), **per-student transport
+fares**, percentage or flat concessions, invoice runs that preview before committing and cannot double-bill, payment recording
+with sequential receipt numbers, reversal that keeps the record, voiding, and printable receipts.
+
+**Fee reminders** — WhatsApp click-to-chat batches grouped by guardian phone number, so a parent with
+three children gets one message rather than three. Resumable: progress is stored server-side.
+
+**Reports** — dues with aging buckets, collection by date range and mode, attendance defaulters. Each
+exports to CSV.
+
+**Access** — admin and teacher roles. Teachers get a read-only student directory and attendance for
+their assigned classes only; anything touching money, users or settings is admin-only.
+
+## API
+
+Base path `/api/v1`. Health probes are unprefixed: `GET /healthz`, `GET /readyz`.
+
+Everything except the health probes requires a signed-in user. **A** = admin only,
+**A/T** = admin or teacher.
+
+```
+      POST   /auth/login                          email + password -> access token + refresh cookie
+      POST   /auth/refresh                        rotates the refresh cookie
+      POST   /auth/logout
+      GET    /auth/config                         public: whether reset-by-email is available
+      POST   /auth/forgot-password                emails a single-use reset link; always 204
+      POST   /auth/reset-password                 consumes the token, revokes every session
+A/T   GET    /auth/me
+A/T   POST   /auth/change-password                revokes every session
+
+A     GET    /users
+A     POST   /users                               returns a one-time temporary password
+A     PATCH  /users/:userId
+A     POST   /users/:userId/deactivate | /activate
+A     POST   /users/:userId/reset-password | /unlock
+
+A/T   GET    /students                            list, search, filter, paginate
+A     POST   /students                            onboard (auto-generates the studentId)
+A/T   GET    /students/:studentId
+A     PATCH  /students/:studentId
+A     POST   /students/:studentId/status          ACTIVE | INACTIVE | TC_ISSUED | ALUMNI
+A     GET    /students/:studentId/charges          pending + billed charges
+A     POST   /students/:studentId/charges          add a charge; billed by the next invoice run
+A     DELETE /students/:studentId/charges/:chargeId remove one that is not billed yet
+A/T   GET    /students/:studentId/siblings
+A     GET    /students/:studentId/family-defaults guardians + address, for pre-filling
+A     GET    /students/search-sibling?q=
+A     POST   /students/promote                    year rollover; dryRun defaults to true
+A/T   GET    /students/stats
+
+A/T   GET    /attendance/roster?classCode&dateKey  teacher: assigned classes only
+A/T   PUT    /attendance/roster                    idempotent bulk upsert
+A/T   GET    /attendance/monthly?classCode&month
+A     GET    /attendance/defaulters?month&threshold
+A/T   GET    /attendance/unmarked                  scoped to the caller's classes
+A/T   GET    /attendance/student/:studentId
+
+A     GET    /fees/structures
+A     GET|PUT /fees/structures/:classCode/:academicYear
+A     POST   /fees/structures/clone                copy a year forward
+A     POST   /fees/runs/preview                    dry run — always shown first
+A     POST   /fees/runs/commit
+A     GET    /fees/invoices                        status, class, period, overdue filters
+A     GET    /fees/invoices/:invoiceId
+A     GET    /fees/invoices/:invoiceId/slip       bill to hand a parent: this month + arrears
+A     POST   /fees/invoices/:invoiceId/payments
+A     POST   /fees/invoices/:invoiceId/payments/:receiptNo/reverse
+A     POST   /fees/invoices/:invoiceId/void
+A     GET    /fees/students/:studentId/invoices
+
+A     GET|POST /notifications                      build a reminder batch
+A     GET    /notifications/:batchId
+A     PATCH  /notifications/:batchId/items/:itemKey  queue progress
+
+A/T   GET    /reports/dashboard                   also carries the school name + academic year
+A     GET    /reports/dues?format=csv
+A     GET    /reports/collection?from&to&format=csv
+
+A     GET    /settings                            admin-only: exposes the ID prefix and counters
+A     PATCH  /settings
+```
+
+## Deploying — Netlify (frontend + backend together)
+
+Both halves deploy to **one origin**, `https://rntps-admin.netlify.app`:
+
+```
+/            -> React SPA          (apps/web/dist)
+/api/*       -> Express API        (Netlify Function, rewritten in netlify.toml)
+```
+
+Same-origin is a deliberate choice, not a convenience. It keeps the auth refresh cookie
+`SameSite=Strict` and **first-party** — a split frontend/backend deployment would make it a
+third-party cookie, which Safari blocks outright and Chrome is phasing out. It also means no CORS
+in production; `CORS_ORIGINS` only matters for local dev, where the two run on different ports.
+
+### How it fits together
+
+| File | Role |
+|---|---|
+| `netlify.toml` | Build command, publish dir, `/api/*` rewrite, SPA fallback, security headers |
+| `netlify/functions/api.mjs` | Netlify entry — a one-line re-export |
+| `apps/api/src/netlify.ts` | The real handler: wraps `createApp()` with `serverless-http`, normalises the path, ensures the DB connection |
+| `apps/web/.env.production` | `VITE_API_URL=/api/v1` — relative, so the SPA calls its own origin |
+
+The handler lives in the api workspace rather than in `netlify/functions` so it is typechecked,
+linted and tested with the rest of the backend.
+
+### First deploy
+
+1. Connect the repo in Netlify. It reads `netlify.toml`, so no dashboard build config is needed.
+2. Set **one** environment variable in Netlify → Site configuration → Environment variables:
+
+   | Key | Value |
+   |---|---|
+   | `MONGODB_URI` | your Atlas string, including `/rntps` and a URL-encoded password |
+   | `NODE_ENV` | `production` |
+   | `JWT_SECRET` | a 32+ byte random string (`openssl rand -base64 48`) |
+
+3. **Atlas → Network Access → add `0.0.0.0/0`.** Netlify's function IPs are not static. The
+   database user password remains the real gate.
+4. Deploy, then from your machine:
+   - `npm run indexes:sync` — `autoIndex` is off in production, so indexes are not created
+     automatically. Required before anything relies on the unique email or roll-number constraints.
+   - `npm run seed:admin -- "Your Name" you@school.example` — creates the first admin and prints a
+     one-time password. Point `MONGODB_URI` at the production cluster when you run it.
+
+### Serverless caveats that shaped the code
+
+- **Connection caching** (`apps/api/src/config/db.ts`) — the connect promise is cached at module
+  scope with `maxPoolSize: 5`. Without it, every invocation opens a new pool and Atlas eventually
+  refuses connections.
+- **Rate limiting is best-effort.** Each warm container keeps its own in-memory counter, so N
+  containers allow N times the limit. `clientIp()` reads Netlify's `x-nf-client-connection-ip`
+  because `req.ip` is undefined without a socket. Real brute-force protection is the database-backed
+  account lockout in the auth module, which every container shares.
+- **Cold starts** are roughly 1–3s after idle.
+- **Function timeout** is ~10s on the free tier. Every operation in the plan — including the
+  200-student invoice run — completes in well under a second at this scale.
+- **Mongoose is `external_node_modules`**, since esbuild cannot follow its runtime driver
+  resolution.
+
+
+### Transport fares
+
+The class fee structure holds the transport head as the **default** fare. Any student can carry their
+own amount in `transportFareOverrideRupees`, set on their record — for distance, stop, or any other
+reason. When present it replaces the class transport amount for that student only, keeping the head's
+name so the invoice still reads "Transport".
+
+- `transportOpted` decides **whether** transport is billed; the fare decides **how much**. A fare set
+  on a student not marked as using transport is not billed, and the invoice-run preview says so
+  rather than dropping it silently.
+- **Blank means "use the class default"**, stored as `null`. **Zero is a real fare** — for a child who
+  travels free — so the two are deliberately different values.
+- Raising the class transport head moves everyone **without** an override, and leaves overridden
+  students alone. That is the point of the split.
+- The preview marks overridden rows, so a run is auditable at a glance.
+- A concession applies to the whole invoice, transport included. If you would rather concessions
+  covered tuition only, that is a change to `concessionFor()` in `packages/shared/src/schemas/fees.ts`.
+
+## Operations
+
+### Year rollover (once a year, around April)
+
+1. **Settings** → set the new `activeAcademicYear`. Generated student IDs follow it.
+2. **Fee structure** → *Copy to next year*, then adjust amounts.
+3. `POST /students/promote` with `dryRun: true` to preview, then `false` to apply. Every active
+   student moves up one class; class 8 becomes `ALUMNI`; roll numbers are cleared for reassignment.
+
+### Monthly (fees)
+
+1. **Generate invoices** → pick the month → *Preview* → check the totals → *Create*. Safe to re-run:
+   the `studentId:period` primary key makes double-billing impossible.
+2. Record payments as they come in. Print receipts from the invoice page.
+3. **Fee reminders** → build a batch → work through the queue.
+4. **Reports → Collection** at month end; reconcile against the bank.
+
+### Daily (attendance)
+
+Teachers mark their own classes. The dashboard flags any class not yet marked.
+
+### Backups
+
+Enable backups on Atlas (M10 and above) and **do one restore drill into a scratch cluster before
+go-live** — an untested backup is not a backup. For an extra offline copy:
+
+```bash
+mongodump --uri "$MONGODB_URI" --out ./backup-$(date +%F)
+```
+
+### Email (for password resets)
+
+Optional, and **currently unset** — so the app tells users to ask an administrator instead of offering
+a reset link. Configure it and self-service reset turns itself on; no code change.
+
+**Gmail** works and is free. Enable 2-Step Verification on the account, create an App Password at
+<https://myaccount.google.com/apppasswords> (your normal password will not work — Google removed
+plain-password SMTP access in 2022), then set:
+
+```
+APP_BASE_URL=https://rntps-admin.netlify.app
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=yourschool@gmail.com
+SMTP_PASS=the-16-character-app-password
+MAIL_FROM="RNTPS Admin <yourschool@gmail.com>"
+```
+
+Verify with `npm run mail:test -- you@example.com` before relying on it.
+
+What to expect from Gmail at this scale:
+
+- **Volume is fine.** A consumer Gmail account allows roughly 500 recipients a day; a school resetting
+  a handful of staff passwords will never approach it.
+- **The From address cannot be faked.** Gmail rewrites it to the account's own address, so mail comes
+  from `yourschool@gmail.com` rather than `noreply@yourschool.in`.
+- **Deliverability is the weak point.** Mail from a consumer account containing a link can land in
+  spam, and Google occasionally blocks programmatic sends originating from a data-centre IP such as a
+  Netlify function. If resets start silently failing, this is why.
+
+`SMTP_*` is generic, so switching provider is only an env change — **Brevo** (300/day free, no custom
+domain needed) or **Resend** (3,000/month free, needs DNS records) both have materially better
+deliverability if Gmail proves flaky.
+
+### Recovering access
+
+- A locked-out user: an admin clears it from **Users → Unlock**, or the user resets their own password.
+- A forgotten password: the user clicks **Forgotten your password?** on the sign-in screen. Failing
+  that, an admin uses **Users → Reset**.
+- **Nobody can sign in at all:** `npm run reset:password -- someone@school.example` from a shell with
+  `MONGODB_URI` set. This reactivates the account, clears any lock and prints a one-time password.
+  It is the only path that does not require an existing session, which is why it needs shell access.
+
+### After a schema change
+
+`npm run indexes:sync`. Production runs with `autoIndex: false`, so new indexes are not created
+automatically.
+
+### Error reporting
+
+Server errors are logged as JSON with a request id (`x-request-id`, echoed on every response), and
+names and phone numbers are redacted. The frontend has an error boundary in
+`apps/web/src/components/ErrorBoundary.tsx` — hook Sentry's `captureException` (or your own endpoint)
+into its `componentDidCatch` if you want these off the user's machine. Nothing is wired to a
+third-party service by default.
+
+## Attendance: three states, and Sundays
+
+A child was either in school or not; a holiday is not a school day at all. That is the whole model —
+`PRESENT`, `ABSENT`, `HOLIDAY`. *Late* and *leave* were removed: they asked the teacher marking thirty
+names each morning to make a judgement call, and nothing downstream treated them differently from
+present and absent anyway.
+
+**Sunday is a holiday for every class, with nothing to declare.** It is *derived*, never stored:
+
+- The roster for a Sunday is read-only, everyone reads `HOLIDAY`, and `PUT /attendance/roster` returns
+  400 rather than accepting marks it would then ignore.
+- The monthly grid shows every Sunday as `H`, in the `holidays` map labelled `Sunday`.
+- Sundays are excluded from working days, so they cannot move anyone's percentage.
+- The dashboard's "not yet marked" nudge stays quiet on a Sunday.
+
+Deriving rather than storing is what makes this safe to introduce on a live database: the rule applies
+to **every past date with no backfill**, and a mark saved on a Sunday before the rule existed is
+ignored rather than left to quietly drag a percentage down. `sunday.test.ts` covers that case
+explicitly.
+
+A school that opens on a particular Sunday cannot record it. If that comes up, the fix is a per-date
+override in Settings' holiday list rather than loosening the rule.
+
+Any `LATE` or `LEAVE` records left in the database are converted by
+`npm run migrate:rupees --workspace @rntps/api` — LATE to PRESENT (the child was in school), LEAVE to
+ABSENT (they were not). Records left on a retired value would simply stop being counted, which is
+worse than converting them.
+
+
+## Dues and other charges
+
+**A student has at most one invoice per month, and it carries everything they owe for that
+month** — class fees, transport, and any charges specific to them.
+
+Charges are therefore *not* invoices. They sit on the student's record and wait:
+
+```
+Student page → Fees → Dues and other charges → Add a charge
+   "What is it for"  +  "Amount"     →  waits on the student
+
+Next monthly invoice run
+   Tuition ₹500  +  Transport ₹700  +  Dues carried forward ₹3,000  +  Exam fee ₹450
+   = one invoice, ₹4,650
+```
+
+Use them for arrears from before this system, an exam fee, a trip, a breakage, a fine.
+`POST /students/:studentId/charges` with `{ name, amountRupees }`; `GET` to list;
+`DELETE /students/:studentId/charges/:chargeId` to drop one that has not been billed yet.
+
+### A charge is billed exactly once
+
+A charge counts as billed **precisely when some non-void invoice carries its id** in a line item.
+That is the only record — there is no separate "billed" flag to fall out of step with reality, and if
+a run dies halfway through, re-running it sees the charge as billed and will not bill it twice.
+
+Three consequences fall out of that, all tested:
+
+- A charge added **after** the month's invoice exists is picked up by the **next** month's run. The
+  existing invoice is never rewritten.
+- **Voiding an invoice frees its charges again**, because a voided invoice bills nothing. They return
+  to pending and the next run takes them.
+- A charge that has been billed **cannot be removed** — it is a line on an invoice a parent may
+  already have paid against. Void or adjust the invoice instead.
+
+### The student page shows all three states
+
+| Group | What it is |
+|---|---|
+| **Every month** | Recurring extras from the fee structure — transport. Already inside each monthly invoice, so not added to the outstanding total |
+| **Waiting for the next invoice** | Charges entered but not yet billed, with a running total, each removable |
+| **Already billed** | Charges a monthly invoice absorbed, linked to that invoice |
+
+The invoice-run preview shows what it is about to absorb, per row (`+2 charges ₹3,450`) and as a
+banner totalling the run.
+
+### Charges with no fee structure still get billed
+
+A student whose class has no fee structure normally sits out the run. If they carry pending charges,
+an invoice is raised for those alone — otherwise real money owed would sit unbilled until somebody
+remembered to configure the class. The class is still reported under `classesWithoutStructure`.
+
+### A concession does not apply to charges
+
+It comes off the class fee lines only — tuition and transport. A trip or a fine is not the school's
+fee to discount, and arrears are already net of whatever concession applied when they arose.
+
+```
+Tuition ₹1,000 + Picnic ₹300, student has a 50% concession
+   gross ₹1,300  −  concession ₹500 (half of ₹1,000)  =  ₹800
+```
+
+### Legacy note
+
+Charges used to be raised as their own invoices, keyed `{studentId}:{period}:C0001`. Any of those
+already in the database stay exactly as they are — real debts, payable, and brought forward on the fee
+slip. Nothing new is created in that shape.
+
+
+## The fee slip
+
+A **receipt** proves what was paid. A **fee slip** says what to pay — and a parent with arrears needs
+one number, not two bills. Invoice page → **Fee slip**, or `GET /fees/invoices/:invoiceId/slip`.
+
+```
+            R N TAGORE PUBLIC SCHOOL
+                    FEE SLIP
+  ----------------------------------------------
+  Ankur Raj · Class 4 · RNTPS-26-001
+  Fee month 2026-08   Due 2026-08-10
+  ----------------------------------------------
+  BROUGHT FORWARD
+    Dues carried forward      2026-03   ₹4,000
+    Previous dues                       ₹4,000
+  ----------------------------------------------
+  2026-08 CHARGES
+    Tuition Fee                           ₹500
+    Transport fee                         ₹700
+    This month                          ₹1,200
+  ==============================================
+  TOTAL PAYABLE                         ₹5,200
+```
+
+**The invoice still charges only its own month.** Everything under *Brought forward* is read from
+those older invoices and displayed; it is never copied onto this one. That is the whole design
+constraint — the original bills still stand, so charging them again here would double the school's
+reported receivables. `feeSlip.test.ts` asserts exactly that: a slip showing ₹5,200 sits alongside a
+dues report that also totals ₹5,200, not ₹9,200.
+
+Older bills are listed oldest first and named, so *Exam fee* and *Dues carried forward* are
+distinguishable. Settled, voided and zero-balance invoices drop off entirely, and a voided invoice
+owes nothing itself while still showing what is outstanding elsewhere.
+
+
+## How a monthly invoice is calculated
+
+In order, per student:
+
+1. **Read the student record** — `classCode`, `transportOpted`, `transportFareOverrideRupees`, `concession`
+2. **Load that class's fee structure** for the academic year (no structure → the class is reported as unbillable, nothing is billed)
+3. **Keep the heads that apply** — `appliesTo: 'ALL'` always; `appliesTo: 'TRANSPORT_OPTED'` only if the student opted into transport at onboarding
+4. **Resolve transport** — the student's own fare wins over the class amount, and is billed **even if the class has no transport head at all**
+5. **Append any pending charges** from the student's record, each carrying its charge id
+6. **Sum to gross, then subtract the concession** — which applies to the fee lines only, not to charges
+
+```
+Class 4 structure     Tuition ₹500 [ALL] · Transport ₹500 [TRANSPORT_OPTED]
+
+transportOpted=false                    → Tuition ₹500                    = ₹500
+transportOpted=true,  no fare set       → Tuition ₹500 + Transport ₹500    = ₹1,000
+transportOpted=true,  fare ₹700         → Tuition ₹500 + Transport ₹700    = ₹1,200
+transportOpted=true,  fare ₹0           → Tuition ₹500 + Transport ₹0      = ₹500   (travels free)
+transportOpted=false, fare ₹700         → Tuition ₹500  (fare flagged, not billed)
+
+Class 1 structure      Tuition ₹400 [ALL]   — no transport head at all
+
+transportOpted=true,  fare ₹350         → Tuition ₹400 + Transport ₹350    = ₹750
+transportOpted=true,  no fare set       → Tuition ₹400  (flagged transportUnpriced)
+
++ 20% concession on the ₹1,200 case      → gross ₹1,200 − ₹240             = ₹960
+```
+
+**The student record is the authority on transport, not the fee structure.** Ticking "Uses school
+transport" at onboarding is the whole mechanism. A transport head in the class structure is only a
+*default amount* — it is **not** a prerequisite for billing. A student who opted in and carries their
+own fare is billed that fare even when their class has no transport head, under the code `TRANSPORT`
+and the label "Transport fee".
+
+That matters because the old rule silently under-billed: a child clearly signed up for the bus, with a
+fare on their record, was charged nothing for it because nobody had added a transport head to their
+class. Nothing in the UI said so.
+
+Two situations are reported rather than passed over, per row and as a banner on the invoice-run preview:
+
+| Flag | Meaning | Fix |
+|---|---|---|
+| `transportUnpriced` | Uses transport, but no fare on the student *and* no transport head on the class — there is no amount to charge | Set a fare on the student, or add a transport head to the class |
+| `transportFareIgnored` | A fare is on record but transport is switched off, so it is not billed | Usually a leftover after the service was cancelled; clear the fare or switch transport back on |
+
+The only case that cannot be billed is `transportUnpriced` — nothing anywhere names a price. Note that
+a fare of **₹0** is a real amount (a child who travels free), not an absent one.
+
+Charges from the student's record are appended as further line items, so the result is a single
+invoice covering everything owed for that month. See the section above.
+
+`calculationChain.test.ts` pins every line of the table above, and asserts the committed invoice
+matches the preview exactly.
+
+
+## Data protection
+
+This system stores children's personal data, so India's DPDP Act 2023 applies: collect the minimum,
+record guardian consent at admission, share with no third party, and define a retention policy. Logs
+are configured to redact names and phone numbers — records are identified by `studentId` only.
+Every mutation to students and users is recorded in `auditLogs` (secrets scrubbed, two-year TTL).

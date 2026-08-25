@@ -1,0 +1,46 @@
+# Frontend and backend are deployed together on one origin (rntps-admin.netlify.app).
+# Same-origin is deliberate: it lets the auth refresh cookie stay SameSite=Strict and
+# first-party, which a split frontend/backend deployment cannot do (Safari blocks
+# third-party cookies outright).
+
+[build]
+  # `npm run build` builds shared -> api -> web, in that order. The function bundles
+  # from apps/api/dist, so the api build must have run first.
+  command = "npm run build"
+  publish = "apps/web/dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  node_bundler = "esbuild"
+  # Mongoose resolves drivers and BSON at runtime, which esbuild cannot follow. Shipping
+  # it from node_modules instead of bundling avoids "module not found" at cold start.
+  external_node_modules = ["mongoose"]
+
+# API first — a rewrite, so the browser URL stays on the same origin.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback. Must come last, or it would swallow /api.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Hashed asset filenames are immutable, so they can be cached hard.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

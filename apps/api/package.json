@@ -1,0 +1,52 @@
+{
+  "name": "@rntps/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed:settings": "tsx src/scripts/seedSettings.ts",
+    "seed:demo": "tsx src/scripts/seedDemoStudents.ts",
+    "indexes:sync": "tsx src/scripts/syncIndexes.ts",
+    "seed:admin": "tsx src/scripts/seedAdmin.ts",
+    "reset:password": "tsx src/scripts/resetPassword.ts",
+    "mail:test": "tsx src/scripts/testMail.ts",
+    "migrate:rupees": "tsx src/scripts/migratePaiseToRupees.ts"
+  },
+  "dependencies": {
+    "@rntps/shared": "*",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.0.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jose": "^6.2.10",
+    "mongoose": "^8.9.2",
+    "nodemailer": "^9.0.5",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "serverless-http": "^4.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.162",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/nodemailer": "^8.0.1",
+    "@types/supertest": "^6.0.2",
+    "mongodb-memory-server": "^10.1.2",
+    "pino-pretty": "^13.0.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}
