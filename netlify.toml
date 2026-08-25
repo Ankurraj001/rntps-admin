@@ -12,6 +12,12 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # NODE_ENV=production is needed at *runtime* — it is what makes the refresh cookie
+  # Secure — but npm reads the same variable during install and skips devDependencies.
+  # TypeScript and Vite live there, so the build died with "tsc: not found". This forces
+  # them in regardless. Nothing from devDependencies ships: the function bundle is built
+  # from apps/api/dist and only pulls what it imports.
+  NPM_FLAGS = "--include=dev"
 
 [functions]
   node_bundler = "esbuild"

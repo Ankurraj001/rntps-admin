@@ -423,6 +423,12 @@ linted and tested with the rest of the backend.
    | `NODE_ENV` | `production` |
    | `JWT_SECRET` | a 32+ byte random string (`openssl rand -base64 48`) |
 
+   `NODE_ENV=production` is required at runtime — it is what makes the refresh cookie `Secure`. Note
+   that npm reads the same variable during install and skips `devDependencies`, where TypeScript and
+   Vite live, so the build fails with `sh: 1: tsc: not found` and exit code 127. `netlify.toml` sets
+   `NPM_FLAGS = "--include=dev"` to force them in. If you ever see 129 packages installed instead of
+   ~538, that is this.
+
 3. **Atlas → Network Access → add `0.0.0.0/0`.** Netlify's function IPs are not static. The
    database user password remains the real gate.
 4. Deploy, then from your machine:
