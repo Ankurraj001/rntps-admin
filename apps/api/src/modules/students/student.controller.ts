@@ -8,6 +8,7 @@ import {
 } from '@rntps/shared';
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../../lib/asyncHandler.js';
+import { recordAudit } from '../../lib/audit.js';
 import { currentUser } from '../../middleware/auth.js';
 import { validatedBody, validatedQuery } from '../../middleware/validate.js';
 import * as service from './student.service.js';
@@ -48,8 +49,33 @@ export const searchSiblings = asyncHandler(async (req: Request, res: Response) =
   res.json({ items: await service.searchSiblingCandidates(term) });
 });
 
+/**
+ * Audited because it rewrites every student in the school in one call, and a mistaken year
+ * pair is only visible afterwards as classes that look wrong. A dry run changes nothing, so
+ * only a real run is recorded.
+ */
 export const promote = asyncHandler(async (req: Request, res: Response) => {
-  res.json(await service.promoteStudents(validatedBody(req, promoteStudentsSchema)));
+  const payload = validatedBody(req, promoteStudentsSchema);
+  const result = await service.promoteStudents(payload);
+
+  if (!payload.dryRun) {
+    await recordAudit(req, {
+      action: 'student.promote',
+      entity: 'student',
+      entityId: `${payload.fromAcademicYear}->${payload.toAcademicYear}`,
+      after: {
+        promoted: result.promoted.length,
+        graduated: result.graduated.length,
+        skipped: result.skipped.length,
+        ...(payload.classCodes?.length ? { classCodes: payload.classCodes } : {}),
+      },
+    });
+  }
+  res.json(result);
+});
+
+export const rolloverStatus = asyncHandler(async (_req: Request, res: Response) => {
+  res.json(await service.getRolloverStatus());
 });
 
 export const stats = asyncHandler(async (_req: Request, res: Response) => {

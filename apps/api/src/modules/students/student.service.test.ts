@@ -1,5 +1,6 @@
 import { academicYearFor, toDateKey } from '@rntps/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { FeeStructure } from '../../models/FeeStructure.js';
 import { Student } from '../../models/Student.js';
 import { SETTINGS_ID, Settings } from '../../models/Settings.js';
 import { listQuery, seedSettings, studentInput } from '../../test/factories.js';
@@ -8,6 +9,13 @@ import * as service from './student.service.js';
 beforeEach(async () => {
   await seedSettings();
 });
+
+/** The generated studentId for a seeded student, since tests refer to them by name. */
+async function idOf(fullName: string): Promise<string> {
+  const student = await Student.findOne({ fullName }).lean();
+  if (!student) throw new Error(`no student named ${fullName}`);
+  return student._id;
+}
 
 describe('createStudent', () => {
   it('generates a sequential, prefixed studentId as the primary key', async () => {
@@ -175,20 +183,27 @@ describe('roll numbers', () => {
 describe('promoteStudents', () => {
   const years = { fromAcademicYear: '2026-27', toAcademicYear: '2027-28' };
 
+  /** Promotion refuses to run into a year the school is not in yet, which is step 2. */
+  const setActiveYear = (year: string) =>
+    Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: year } });
+
   beforeEach(async () => {
-    await Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: '2026-27' } });
+    await setActiveYear('2026-27');
     await service.createStudent(studentInput({ fullName: 'Nursery Kid', classCode: 'NURSERY' }));
     await service.createStudent(studentInput({ fullName: 'UKG Kid', classCode: 'UKG' }));
     await service.createStudent(studentInput({ fullName: 'Class 8 Kid', classCode: '8' }));
+    await setActiveYear('2027-28');
   });
 
   it('previews without writing when dryRun is set', async () => {
     const result = await service.promoteStudents({ ...years, dryRun: true });
 
+    expect(result.dryRun).toBe(true);
     expect(result.promoted).toHaveLength(2);
     expect(result.graduated).toHaveLength(1);
     const unchanged = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
     expect(unchanged?.classCode).toBe('NURSERY');
+    expect(unchanged?.academicYear).toBe('2026-27');
   });
 
   it('moves each class up one step and graduates class 8', async () => {
@@ -200,8 +215,23 @@ describe('promoteStudents', () => {
 
     expect(nursery?.classCode).toBe('LKG');
     expect(ukg?.classCode).toBe('1');
-    expect(eighth?.status).toBe('ALUMNI');
+    expect(nursery?.status).toBe('ACTIVE');
     expect(nursery?.academicYear).toBe('2027-28');
+    // A leaver keeps the class they left from — there is no next class for them.
+    expect(eighth?.status).toBe('ALUMNI');
+    expect(eighth?.classCode).toBe('8');
+  });
+
+  it('clears every roll number for reassignment', async () => {
+    await Student.updateMany({ classCode: 'UKG' }, { $set: { rollNo: 4 } });
+
+    await service.promoteStudents({ ...years, dryRun: false });
+
+    // Load-bearing, not cosmetic: the unique {classCode, academicYear, rollNo} index only
+    // covers numeric roll numbers, so nulling them is what lets the unordered bulk write
+    // move a whole class into numbers another class still holds.
+    const all = await Student.find({}).lean();
+    expect(all.map((student) => student.rollNo)).toEqual(all.map(() => null));
   });
 
   it('is a no-op the second time, because the source year no longer matches', async () => {
@@ -209,8 +239,159 @@ describe('promoteStudents', () => {
     const second = await service.promoteStudents({ ...years, dryRun: false });
 
     expect(second.promoted).toHaveLength(0);
+    expect(second.graduated).toHaveLength(0);
     const ukg = await Student.findOne({ fullName: 'UKG Kid' }).lean();
     expect(ukg?.classCode).toBe('1');
+  });
+
+  it('refuses a year pair that is not one session apart', async () => {
+    /**
+     * The dangerous one. With from === to the filter matches the rows the update produces,
+     * so every call would move the whole school up another class and turn whatever falls
+     * off the top into alumni — which nothing can undo.
+     */
+    await setActiveYear('2026-27');
+    await expect(
+      service.promoteStudents({ fromAcademicYear: '2026-27', toAcademicYear: '2026-27', dryRun: false }),
+    ).rejects.toThrow(/one session to the next/i);
+
+    await setActiveYear('2025-26');
+    await expect(
+      service.promoteStudents({ fromAcademicYear: '2026-27', toAcademicYear: '2025-26', dryRun: false }),
+    ).rejects.toThrow(/one session to the next/i);
+
+    await setActiveYear('2028-29');
+    await expect(
+      service.promoteStudents({ fromAcademicYear: '2026-27', toAcademicYear: '2028-29', dryRun: false }),
+    ).rejects.toThrow(/one session to the next/i);
+
+    const nursery = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    expect(nursery?.classCode).toBe('NURSERY');
+  });
+
+  it('refuses to promote into a year the school is not in yet', async () => {
+    // Leaving the year flipped without promoting makes the monthly run price last year's
+    // classes against this year's structures, so the two steps are tied together.
+    await setActiveYear('2026-27');
+
+    await expect(service.promoteStudents({ ...years, dryRun: true })).rejects.toThrow(
+      /still 2026-27/,
+    );
+  });
+
+  it('reports an unrecognised class instead of graduating it', async () => {
+    // nextClassCode returns null both for class 8 and for a code it does not know, and
+    // treating those the same silently turned a corrupt record into an alumnus.
+    await Student.updateOne({ fullName: 'UKG Kid' }, { $set: { classCode: 'CLASS_IX' } });
+
+    const result = await service.promoteStudents({ ...years, dryRun: false });
+
+    expect(result.skipped).toEqual([
+      { studentId: expect.any(String), reason: expect.stringContaining('CLASS_IX') },
+    ]);
+    const stranded = await Student.findOne({ fullName: 'UKG Kid' }).lean();
+    expect(stranded?.status).toBe('ACTIVE');
+    expect(stranded?.classCode).toBe('CLASS_IX');
+  });
+
+  it('carries a transfer certificate to alumni and leaves an inactive student alone', async () => {
+    await service.setStudentStatus(await idOf('UKG Kid'), 'TC_ISSUED', 'Moved city');
+    await service.setStudentStatus(await idOf('Nursery Kid'), 'INACTIVE', 'Long absence');
+
+    const result = await service.promoteStudents({ ...years, dryRun: false });
+
+    const tc = await Student.findOne({ fullName: 'UKG Kid' }).lean();
+    expect(tc?.status).toBe('ALUMNI');
+    // No next class for a leaver, so the class they left from is preserved.
+    expect(tc?.classCode).toBe('UKG');
+    expect(tc?.academicYear).toBe('2027-28');
+
+    // Already off the roll — frozen in the session they left, which is accurate history.
+    const inactive = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    expect(inactive?.status).toBe('INACTIVE');
+    expect(inactive?.classCode).toBe('NURSERY');
+    expect(inactive?.academicYear).toBe('2026-27');
+
+    expect(result.promoted).toHaveLength(0);
+    expect(result.graduated).toHaveLength(2);
+  });
+
+  it('restricts the run to the classes it is given', async () => {
+    const result = await service.promoteStudents({ ...years, classCodes: ['UKG'], dryRun: false });
+
+    expect(result.promoted).toHaveLength(1);
+    const ukg = await Student.findOne({ fullName: 'UKG Kid' }).lean();
+    const nursery = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    expect(ukg?.classCode).toBe('1');
+    expect(nursery?.classCode).toBe('NURSERY');
+  });
+});
+
+describe('getRolloverStatus', () => {
+  beforeEach(async () => {
+    await Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: '2026-27' } });
+    await service.createStudent(studentInput({ fullName: 'Nursery Kid', classCode: 'NURSERY' }));
+  });
+
+  it('proposes the next session when nothing has started', async () => {
+    const status = await service.getRolloverStatus();
+
+    expect(status).toMatchObject({
+      activeAcademicYear: '2026-27',
+      fromAcademicYear: '2026-27',
+      toAcademicYear: '2027-28',
+      notStarted: true,
+    });
+    expect(status.cohorts).toEqual([{ academicYear: '2026-27', count: 1 }]);
+    expect(status.steps).toEqual({
+      feeStructuresCloned: false,
+      academicYearSet: false,
+      studentsPromoted: false,
+    });
+  });
+
+  it('reads the session pair from the students once the year is flipped', async () => {
+    await Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: '2027-28' } });
+
+    const status = await service.getRolloverStatus();
+
+    // The cohort left behind is what identifies the session being closed — there is no
+    // flag anywhere recording that the flip happened.
+    expect(status).toMatchObject({
+      fromAcademicYear: '2026-27',
+      toAcademicYear: '2027-28',
+      notStarted: false,
+    });
+    expect(status.steps.academicYearSet).toBe(true);
+    expect(status.steps.studentsPromoted).toBe(false);
+  });
+
+  it('marks the promotion done once no cohort is left behind', async () => {
+    await Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: '2027-28' } });
+    await service.promoteStudents({
+      fromAcademicYear: '2026-27',
+      toAcademicYear: '2027-28',
+      dryRun: false,
+    });
+
+    const status = await service.getRolloverStatus();
+
+    // Complete, so it now describes the *next* rollover rather than one in progress.
+    expect(status.notStarted).toBe(true);
+    expect(status.fromAcademicYear).toBe('2027-28');
+    expect(status.toAcademicYear).toBe('2028-29');
+  });
+
+  it('sees the fee structures once they exist for the target year', async () => {
+    await FeeStructure.create({
+      _id: '5:2027-28',
+      classCode: '5',
+      academicYear: '2027-28',
+      heads: [{ code: 'TUITION', name: 'Tuition Fee', amountRupees: 500, appliesTo: 'ALL' }],
+    });
+
+    const status = await service.getRolloverStatus();
+    expect(status.steps.feeStructuresCloned).toBe(true);
   });
 });
 

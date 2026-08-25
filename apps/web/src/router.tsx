@@ -17,6 +17,7 @@ import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
+import { YearRolloverPage } from '@/pages/rollover/YearRolloverPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { UsersPage } from '@/pages/UsersPage';
 import { StudentDetailPage } from '@/pages/students/StudentDetailPage';
@@ -64,6 +65,7 @@ export const router = createBrowserRouter([
       { path: 'notifications', element: adminOnly(<NotificationsPage />) },
       { path: 'reports', element: adminOnly(<ReportsPage />) },
       { path: 'users', element: adminOnly(<UsersPage />) },
+      { path: 'rollover', element: adminOnly(<YearRolloverPage />) },
       { path: 'settings', element: adminOnly(<SettingsPage />) },
       { path: '*', element: <NotFoundPage /> },
     ],

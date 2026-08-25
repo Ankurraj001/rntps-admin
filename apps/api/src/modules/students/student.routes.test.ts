@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../app.js';
+import { AuditLog } from '../../models/AuditLog.js';
 import { adminAuth, seedSettings, teacherAuth } from '../../test/factories.js';
 
 let app: Express;
@@ -224,6 +225,39 @@ describe('authorisation', () => {
       .set('Authorization', header)
       .send({ fromAcademicYear: '2026-27', toAcademicYear: '2027-28', dryRun: true })
       .expect(403);
+  });
+
+  it('exposes the rollover status to an admin and hides it from a teacher', async () => {
+    const { header } = await teacherAuth(['5']);
+    await request(app).get('/api/v1/students/rollover-status').set('Authorization', header).expect(403);
+
+    const res = await asAdmin.get('/api/v1/students/rollover-status').expect(200);
+    expect(res.body).toMatchObject({
+      activeAcademicYear: expect.any(String),
+      fromAcademicYear: expect.any(String),
+      toAcademicYear: expect.any(String),
+      notStarted: expect.any(Boolean),
+    });
+    expect(res.body.steps).toMatchObject({
+      feeStructuresCloned: expect.any(Boolean),
+      academicYearSet: expect.any(Boolean),
+      studentsPromoted: expect.any(Boolean),
+    });
+  });
+
+  it('records a real promotion in the audit log but not a dry run', async () => {
+    await asAdmin.post('/api/v1/students').send(validStudent).expect(201);
+    await asAdmin.patch('/api/v1/settings').send({ activeAcademicYear: '2027-28' }).expect(200);
+    const years = { fromAcademicYear: '2026-27', toAcademicYear: '2027-28' };
+
+    await asAdmin.post('/api/v1/students/promote').send({ ...years, dryRun: true }).expect(200);
+    expect(await AuditLog.countDocuments({ action: 'student.promote' })).toBe(0);
+
+    await asAdmin.post('/api/v1/students/promote').send({ ...years, dryRun: false }).expect(200);
+    const entry = await AuditLog.findOne({ action: 'student.promote' }).lean();
+    // Who ran it and over which sessions — a wrong year pair is otherwise only visible
+    // later, as classes that look wrong.
+    expect(entry).toMatchObject({ entityId: '2026-27->2027-28', after: { promoted: 1 } });
   });
 
   it('hides whole-family guardian contact details from teachers', async () => {

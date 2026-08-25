@@ -1,4 +1,5 @@
 import type {
+  RolloverStatusDto,
   StudentChargeDto,
   CreateStudentInput,
   Paginated,
@@ -59,6 +60,7 @@ export const studentsApi = {
     classCodes?: string[];
     dryRun: boolean;
   }) => api.post<PromotionResult>('/students/promote', payload),
+  rolloverStatus: () => api.get<RolloverStatusDto>('/students/rollover-status'),
   charges: (studentId: string) => api.get<{ items: StudentChargeDto[] }>(`/students/${studentId}/charges`),
   addCharge: (studentId: string, payload: { name: string; amountRupees: number }) =>
     api.post<{ items: StudentChargeDto[] }>(`/students/${studentId}/charges`, payload),
@@ -74,4 +76,5 @@ export const studentKeys = {
   detail: (studentId: string) => ['students', 'detail', studentId] as const,
   siblings: (studentId: string) => ['students', 'siblings', studentId] as const,
   stats: ['students', 'stats'] as const,
+  rollover: ['students', 'rollover'] as const,
 };

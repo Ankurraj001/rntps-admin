@@ -106,3 +106,21 @@ export function periodLabel(period: string): string {
   const month = MONTH_NAMES[Number(period.slice(5, 7)) - 1];
   return month ? `${month} ${period.slice(0, 4)}` : period;
 }
+
+/**
+ * The session after this one, e.g. "2026-27" -> "2027-28".
+ *
+ * Derived rather than typed by hand: the fee-structure clone prompt defaults to a
+ * hardcoded year, which is right only by luck for one session and silently wrong for
+ * every other. The rollover screen computes both ends of the pair from this.
+ */
+export function nextAcademicYear(academicYear: string): string {
+  const startYear = Number(academicYear.slice(0, 4)) + 1;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
+
+/** The session before this one, e.g. "2027-28" -> "2026-27". */
+export function previousAcademicYear(academicYear: string): string {
+  const startYear = Number(academicYear.slice(0, 4)) - 1;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}

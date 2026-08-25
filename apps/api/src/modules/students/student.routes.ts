@@ -23,6 +23,7 @@ const adminOnly = requireRole('ADMIN');
 // Static paths are declared before /:studentId so they are not swallowed by it.
 studentRoutes.get('/stats', controller.stats);
 studentRoutes.get('/search-sibling', adminOnly, controller.searchSiblings);
+studentRoutes.get('/rollover-status', adminOnly, controller.rolloverStatus);
 studentRoutes.post('/promote', adminOnly, validate(promoteStudentsSchema), controller.promote);
 
 studentRoutes.get('/', validate(listStudentsQuerySchema, 'query'), controller.list);

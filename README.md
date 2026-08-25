@@ -277,7 +277,9 @@ their own, so a handed-over password cannot be used to browse student records in
 
 **Students** — onboarding with sibling linking (shared `familyId`, guardian and address pre-filled
 from the sibling), searchable directory, editing from either the list row or the student page, status
-transitions (records are never deleted), year-rollover promotion with class 8 graduating to alumni.
+transitions (records are never deleted), and a guided **year rollover** that copies the fee structures
+forward, moves the new session in, and promotes every student one class with class 8 graduating to
+alumni.
 
 Each student can carry an **Aadhaar number** and an **APAAR ID / PEN**, both optional and unique
 across the school, and both searchable — so a student can be found from a government form. Aadhaar is
@@ -366,6 +368,7 @@ A/T   GET    /students/:studentId/siblings
 A     GET    /students/:studentId/family-defaults guardians + address, for pre-filling
 A     GET    /students/search-sibling?q=
 A     POST   /students/promote                    year rollover; dryRun defaults to true
+A     GET    /students/rollover-status            which rollover steps are still outstanding
 A/T   GET    /students/stats
 
 A/T   GET    /attendance/roster?classCode&dateKey  teacher: assigned classes only
@@ -489,10 +492,38 @@ name so the invoice still reads "Transport".
 
 ### Year rollover (once a year, around April)
 
-1. **Settings** → set the new `activeAcademicYear`. Generated student IDs follow it.
-2. **Fee structure** → *Copy to next year*, then adjust amounts.
-3. `POST /students/promote` with `dryRun: true` to preview, then `false` to apply. Every active
-   student moves up one class; class 8 becomes `ALUMNI`; roll numbers are cleared for reassignment.
+**Year rollover** → three steps, in order. Each is safe to run again, so a half-finished rollover is
+resumed by reloading the page.
+
+1. **Copy the fee structures forward.** Amounts are copied unchanged; revise them afterwards on
+   **Fee structure**.
+2. **Set the new session year.** Generated student IDs and receipt numbers follow it, and the monthly
+   fee run prices from it.
+3. **Promote the students** — preview, then apply. Every student on the roll moves up one class;
+   class 8 and anyone holding a transfer certificate become `ALUMNI`; roll numbers are cleared for
+   reassignment.
+
+**The order matters, and the screen enforces it.** Copying comes first because a clone reads its
+*source* year — flip the year first and every class starts the new session unpriced. Setting the year
+comes before promoting because promotion refuses to run into a session the school is not in yet. And
+leaving the year flipped *without* promoting is the quiet failure the ordering exists to prevent: the
+monthly run would price last year's classes against this year's structures, billing the whole school
+one class behind with nothing on screen to say so.
+
+Two guards worth knowing about. A rollover must move exactly one session forward — `2026-27` to
+`2027-28`, never to itself. Promoting a year onto itself would make the selection match the rows the
+update produces, so each call would advance the whole school another class and turn whatever fell off
+the top into alumni, which nothing can undo. And a class code the system does not recognise is
+*reported*, not graduated: `nextClassCode` returns nothing both for class 8 and for an unknown code,
+and treating those alike used to turn a corrupt record into an alumnus.
+
+Re-running step 3 is a no-op because the selection is keyed on the session being closed and the update
+writes the new one. That is also the only recovery from a partial write, which is why the year pair is
+validated so strictly. The promotion is recorded in `auditLogs` with the actor, the session pair and
+the counts.
+
+Rolling over does not disturb history: invoices snapshot the student's name and class
+(`models/Invoice.ts`), so last year's bills still read the way they were issued.
 
 ### Monthly (fees)
 

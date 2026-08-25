@@ -81,6 +81,27 @@ describe('fee structures', () => {
     expect(again.body).toEqual({ copied: 0, skipped: 2 });
   });
 
+  it('counts the classes it did copy when some already exist', async () => {
+    await setStructure('5');
+    await as
+      .post('/api/v1/fees/structures/clone')
+      .send({ fromAcademicYear: YEAR, toAcademicYear: '2027-28' })
+      .expect(200);
+
+    // Class 6 is new, class 5 is already there. An unordered bulk write inserts the one and
+    // rejects the other, and the count has to reflect that: reporting "copied 0" for a
+    // clone that half worked reads as a failure to whoever ran the rollover.
+    await setStructure('6');
+    const res = await as
+      .post('/api/v1/fees/structures/clone')
+      .send({ fromAcademicYear: YEAR, toAcademicYear: '2027-28' })
+      .expect(200);
+
+    expect(res.body).toEqual({ copied: 1, skipped: 1 });
+    const target = await as.get('/api/v1/fees/structures?academicYear=2027-28').expect(200);
+    expect(target.body.items).toHaveLength(2);
+  });
+
   it('is closed to teachers', async () => {
     const { header } = await teacherAuth();
     await request(app).get('/api/v1/fees/structures').set('Authorization', header).expect(403);

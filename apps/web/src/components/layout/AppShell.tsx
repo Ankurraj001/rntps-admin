@@ -6,6 +6,7 @@ import {
   FilePlus2,
   IndianRupee,
   GraduationCap,
+  RefreshCw,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -41,6 +42,7 @@ const NAV: NavItem[] = [
   { to: '/notifications', label: 'Fee reminders', icon: MessageSquare, adminOnly: true },
   { to: '/reports', label: 'Reports', icon: BarChart3, adminOnly: true },
   { to: '/users', label: 'Users', icon: UserCog, adminOnly: true },
+  { to: '/rollover', label: 'Year rollover', icon: RefreshCw, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
 ];
 

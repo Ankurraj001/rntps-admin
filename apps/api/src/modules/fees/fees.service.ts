@@ -93,12 +93,21 @@ export async function cloneFeeStructures(
   }));
 
   // ordered:false so an existing target year's class is skipped rather than aborting.
-  const result = await FeeStructure.bulkWrite(operations, { ordered: false }).catch((error: unknown) => {
-    if (isDuplicateKeyError(error)) return null;
-    throw error;
-  });
+  const copied = await FeeStructure.bulkWrite(operations, { ordered: false })
+    .then((result) => result.insertedCount)
+    .catch((error: unknown) => {
+      /**
+       * An unordered bulk write still inserts everything it can and reports the classes
+       * that already existed as duplicate-key errors. The successful inserts are counted on
+       * the error's own result, so discarding it reported "copied 0, skipped all" for a
+       * clone that had in fact worked — which reads as a failure to whoever ran it.
+       */
+      if (isDuplicateKeyError(error)) {
+        return (error as { result?: { insertedCount?: number } }).result?.insertedCount ?? 0;
+      }
+      throw error;
+    });
 
-  const copied = result?.insertedCount ?? 0;
   return { copied, skipped: source.length - copied };
 }
 

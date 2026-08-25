@@ -293,3 +293,32 @@ export interface SiblingDto {
   classCode: string;
   status: string;
 }
+
+/**
+ * Everything the year-rollover screen needs, in one read.
+ *
+ * The three levers of a rollover — clone the fee structures, set the new session year,
+ * promote the students — are separate endpoints with no shared state, so the only way to
+ * know which have been done is to look at their effects. Deriving that on the server keeps
+ * the client from guessing, and keeps the answer the same whichever step it is asked after.
+ */
+export interface RolloverStatusDto {
+  /** The session the school is currently operating in, from settings. */
+  activeAcademicYear: string;
+  /** The session being closed. */
+  fromAcademicYear: string;
+  /** The session being opened. */
+  toAcademicYear: string;
+  /**
+   * True when no cohort is behind the active year — nothing is mid-rollover, and the pair
+   * above describes the *next* one rather than one in progress.
+   */
+  notStarted: boolean;
+  /** Students still on the roll, grouped by the session on their record, oldest first. */
+  cohorts: { academicYear: string; count: number }[];
+  steps: {
+    feeStructuresCloned: boolean;
+    academicYearSet: boolean;
+    studentsPromoted: boolean;
+  };
+}

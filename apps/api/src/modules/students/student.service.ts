@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import {
+  CLASS_CODES,
+  nextAcademicYear,
   nextClassCode,
   type AddChargePayload,
   type ClassCode,
   type ListStudentsQuery,
   type Paginated,
+  type RolloverStatusDto,
   type SiblingDto,
   type StudentChargeDto,
   type StudentDto,
@@ -14,6 +17,7 @@ import {
 import { AppError } from '../../lib/AppError.js';
 import { duplicateKeyIncludes, isDuplicateKeyError } from '../../lib/mongoErrors.js';
 import { generateFamilyId, generateStudentId, getSettings } from '../../lib/ids.js';
+import { FeeStructure } from '../../models/FeeStructure.js';
 import { Invoice } from '../../models/Invoice.js';
 import { Student, type StudentDoc } from '../../models/Student.js';
 
@@ -275,9 +279,17 @@ export interface PromotionResult {
   skipped: { studentId: string; reason: string }[];
 }
 
+/** Statuses a rollover acts on. Anyone else has already left and is left as history. */
+const ROLLOVER_STATUSES = ['ACTIVE', 'TC_ISSUED'] as const;
+
 /**
- * Year rollover: every active student moves up one class, and class 8 becomes alumni.
+ * Year rollover: every student on the roll moves up one class, and class 8 becomes alumni.
  * Defaults to a dry run because it touches the whole school in one call.
+ *
+ * Re-running is a no-op, and that property is load-bearing rather than incidental: the
+ * filter selects `academicYear: from` and the update writes `academicYear: to`, so a second
+ * pass matches nothing. It is also the only recovery available — the writes are unordered
+ * and there is no transaction — which is why the year pair is validated so strictly below.
  */
 export async function promoteStudents(input: {
   fromAcademicYear: string;
@@ -285,26 +297,78 @@ export async function promoteStudents(input: {
   classCodes?: ClassCode[];
   dryRun: boolean;
 }): Promise<PromotionResult> {
-  const filter: Record<string, unknown> = { status: 'ACTIVE', academicYear: input.fromAcademicYear };
+  /**
+   * Without this, `from === to` makes the filter match the very rows the update produces,
+   * so every call moves the whole school up another class — and the classes that fall off
+   * the top become alumni, which nothing can undo.
+   */
+  if (input.toAcademicYear !== nextAcademicYear(input.fromAcademicYear)) {
+    throw AppError.badRequest(
+      `A rollover moves one session to the next: ${input.fromAcademicYear} should be followed by ${nextAcademicYear(input.fromAcademicYear)}`,
+    );
+  }
+
+  /**
+   * Ties promotion to the settings flip. Promoting into a year the school is not yet in
+   * would leave new admissions stamped with the old session; leaving the year flipped
+   * *without* promoting makes the monthly run price last year's classes against this
+   * year's structures, billing the whole school one class behind in silence.
+   */
+  const settings = await getSettings();
+  if (input.toAcademicYear !== settings.activeAcademicYear) {
+    throw AppError.badRequest(
+      `Set the active academic year to ${input.toAcademicYear} before promoting — it is still ${settings.activeAcademicYear}`,
+    );
+  }
+
+  const filter: Record<string, unknown> = {
+    status: { $in: ROLLOVER_STATUSES },
+    academicYear: input.fromAcademicYear,
+  };
   if (input.classCodes?.length) filter.classCode = { $in: input.classCodes };
 
-  const students = await Student.find(filter).select('fullName classCode').lean<StudentDoc[]>();
+  const students = await Student.find(filter).select('fullName classCode status').lean<StudentDoc[]>();
 
   const result: PromotionResult = { dryRun: input.dryRun, promoted: [], graduated: [], skipped: [] };
   const writes: Parameters<typeof Student.bulkWrite>[0] = [];
 
+  // Leavers keep the class they left from — there is no next class for them, and rewriting
+  // it would misreport which class they were last in.
+  const graduate = (student: StudentDoc) => {
+    result.graduated.push({ studentId: student._id, fullName: student.fullName });
+    writes.push({
+      updateOne: {
+        filter: { _id: student._id },
+        update: { $set: { status: 'ALUMNI', rollNo: null, academicYear: input.toAcademicYear } },
+      },
+    });
+  };
+
   for (const student of students) {
-    const target = nextClassCode(student.classCode);
-    if (target === null) {
-      result.graduated.push({ studentId: student._id, fullName: student.fullName });
-      writes.push({
-        updateOne: {
-          filter: { _id: student._id },
-          update: { $set: { status: 'ALUMNI', rollNo: null, academicYear: input.toAcademicYear } },
-        },
+    // A transfer certificate has already been issued, so there is no class to move them
+    // into — they leave the roll as alumni with the class they left from.
+    if (student.status === 'TC_ISSUED') {
+      graduate(student);
+      continue;
+    }
+
+    // `nextClassCode` returns null both for the terminal class and for a code it does not
+    // recognise. Treating those the same turned a corrupt record into an alumnus, which is
+    // not recoverable, so the unknown case is reported instead.
+    if (!CLASS_CODES.includes(student.classCode)) {
+      result.skipped.push({
+        studentId: student._id,
+        reason: `Unrecognised class "${student.classCode}" — fix the record, then re-run`,
       });
       continue;
     }
+
+    const target = nextClassCode(student.classCode);
+    if (target === null) {
+      graduate(student);
+      continue;
+    }
+
     result.promoted.push({
       studentId: student._id,
       fullName: student.fullName,
@@ -314,16 +378,74 @@ export async function promoteStudents(input: {
     writes.push({
       updateOne: {
         filter: { _id: student._id },
-        // Roll numbers are re-assigned after promotion, so they are cleared here.
+        // Clearing the roll number is what lets these writes run unordered. The unique
+        // index on {classCode, academicYear, rollNo} only covers numeric roll numbers, so
+        // nulling it drops the document out of the index before it could collide with a
+        // number already taken in the class it is moving into.
         update: { $set: { classCode: target, academicYear: input.toAcademicYear, rollNo: null } },
       },
     });
   }
 
   if (!input.dryRun && writes.length > 0) {
-    await Student.bulkWrite(writes, { ordered: false });
+    const written = await Student.bulkWrite(writes, { ordered: false });
+    /**
+     * The lists above were computed before the write, so a partial failure would otherwise
+     * report everyone as moved. Reporting the shortfall makes it visible; the fix is always
+     * to run it again, which the year filter makes safe.
+     */
+    const expected = result.promoted.length + result.graduated.length;
+    if (written.modifiedCount < expected) {
+      result.skipped.push({
+        studentId: '—',
+        reason: `${expected - written.modifiedCount} of ${expected} records did not update — re-run to finish`,
+      });
+    }
   }
   return result;
+}
+
+/**
+ * Which parts of a year rollover have been done, derived from their effects.
+ *
+ * Cloning the structures, setting the session year and promoting the students are three
+ * independent endpoints sharing no state, so there is no flag to read — only consequences.
+ */
+export async function getRolloverStatus(): Promise<RolloverStatusDto> {
+  const settings = await getSettings();
+  const activeAcademicYear = settings.activeAcademicYear;
+
+  const grouped = await Student.aggregate<{ _id: string; count: number }>([
+    { $match: { status: { $in: ROLLOVER_STATUSES } } },
+    { $group: { _id: '$academicYear', count: { $sum: 1 } } },
+  ]);
+  const cohorts = grouped
+    .map((row) => ({ academicYear: row._id, count: row.count }))
+    .sort((a, b) => a.academicYear.localeCompare(b.academicYear));
+
+  // A cohort behind the active year means the year was already flipped and the promotion
+  // is the part still outstanding. The newest of them is the session being closed —
+  // anything older was missed in an earlier April and is reported as its own cohort.
+  const stale = cohorts.filter((cohort) => cohort.academicYear < activeAcademicYear);
+  const newestStale = stale[stale.length - 1];
+
+  const fromAcademicYear = newestStale ? newestStale.academicYear : activeAcademicYear;
+  const toAcademicYear = newestStale ? activeAcademicYear : nextAcademicYear(activeAcademicYear);
+
+  const structuresForTarget = await FeeStructure.countDocuments({ academicYear: toAcademicYear });
+
+  return {
+    activeAcademicYear,
+    fromAcademicYear,
+    toAcademicYear,
+    notStarted: !newestStale,
+    cohorts,
+    steps: {
+      feeStructuresCloned: structuresForTarget > 0,
+      academicYearSet: activeAcademicYear === toAcademicYear,
+      studentsPromoted: !cohorts.some((cohort) => cohort.academicYear === fromAcademicYear),
+    },
+  };
 }
 
 /** Small dashboard aggregate: how many active students sit in each class. */
