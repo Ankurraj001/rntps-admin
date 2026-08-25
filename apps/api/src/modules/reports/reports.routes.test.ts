@@ -171,7 +171,25 @@ describe('GET /reports/collection', () => {
     expect(res.body.totals.count).toBe(0);
   });
 
-  it('excludes reversed payments, so a bounced cheque does not inflate the day', async () => {
+  it('lists the newest receipt first', async () => {
+    const student = await billAndInvoice('5', 'Aarav Sharma');
+    const invoice = `${student.studentId}:${PERIOD}`;
+
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 100, mode: 'CASH', paidAt: '2026-08-03' }).expect(201);
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 200, mode: 'CASH', paidAt: '2026-08-20' }).expect(201);
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 300, mode: 'CASH', paidAt: '2026-08-11' }).expect(201);
+
+    const res = await as.get('/api/v1/reports/collection?from=2026-08-01&to=2026-08-31').expect(200);
+
+    // The receipts an admin needs are the ones just taken, not the oldest in the range.
+    expect(res.body.rows.map((row: { paidAt: string }) => row.paidAt)).toEqual([
+      '2026-08-20',
+      '2026-08-11',
+      '2026-08-03',
+    ]);
+  });
+
+  it('lists a reversed payment but keeps it out of the totals', async () => {
     const student = await billAndInvoice('5', 'Aarav Sharma');
     const invoice = `${student.studentId}:${PERIOD}`;
 
@@ -179,7 +197,62 @@ describe('GET /reports/collection', () => {
     await as.post(`/api/v1/fees/invoices/${invoice}/payments/RCPT-26-0001/reverse`).send({ reason: 'Bounced' }).expect(200);
 
     const res = await as.get('/api/v1/reports/collection?from=2026-08-01&to=2026-08-31').expect(200);
-    expect(res.body.totals).toMatchObject({ count: 0, amountRupees: 0 });
+
+    // A bounced cheque must not inflate the day's collection...
+    expect(res.body.totals).toMatchObject({ count: 0, amountRupees: 0, reversedCount: 1, reversedRupees: 500 });
+    expect(res.body.totals.byMode).toEqual({});
+    // ...but the receipt was handed to a parent, so it cannot vanish from the record either.
+    expect(res.body.rows).toHaveLength(1);
+    expect(res.body.rows[0]).toMatchObject({
+      receiptNo: 'RCPT-26-0001',
+      amountRupees: 500,
+      isReversed: true,
+      reversalReason: 'Bounced',
+    });
+    expect(res.body.rows[0].reversedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('reports what was kept alongside what was reversed', async () => {
+    const student = await billAndInvoice('5', 'Aarav Sharma');
+    const invoice = `${student.studentId}:${PERIOD}`;
+
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 500, mode: 'CHEQUE', paidAt: '2026-08-05' }).expect(201);
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments/RCPT-26-0001/reverse`).send({ reason: 'Bounced' }).expect(200);
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 500, mode: 'CASH', paidAt: '2026-08-06' }).expect(201);
+
+    const res = await as.get('/api/v1/reports/collection?from=2026-08-01&to=2026-08-31').expect(200);
+
+    expect(res.body.rows).toHaveLength(2);
+    // `count` explains `amountRupees`: one receipt kept, ₹500, all of it cash.
+    expect(res.body.totals).toMatchObject({ count: 1, amountRupees: 500, reversedCount: 1, reversedRupees: 500 });
+    expect(res.body.totals.byMode).toEqual({ CASH: 500 });
+  });
+
+  it('marks a reversal in the CSV so a summed column cannot count it', async () => {
+    const student = await billAndInvoice('5', 'Aarav Sharma');
+    const invoice = `${student.studentId}:${PERIOD}`;
+
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 500, mode: 'CHEQUE', paidAt: '2026-08-05' }).expect(201);
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments/RCPT-26-0001/reverse`).send({ reason: 'Bounced' }).expect(200);
+
+    const res = await as.get('/api/v1/reports/collection?from=2026-08-01&to=2026-08-31&format=csv').expect(200);
+
+    expect(res.text).toContain('Status');
+    expect(res.text).toContain('Reversed');
+    expect(res.text).toContain('Bounced');
+  });
+
+  it('keeps a reversal out of the dashboard collection figure', async () => {
+    const student = await billAndInvoice('5', 'Aarav Sharma');
+    const invoice = `${student.studentId}:${PERIOD}`;
+    const today = new Date().toISOString().slice(0, 10);
+
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments`).send({ amountRupees: 500, mode: 'CHEQUE', paidAt: today }).expect(201);
+    await as.post(`/api/v1/fees/invoices/${invoice}/payments/RCPT-26-0001/reverse`).send({ reason: 'Bounced' }).expect(200);
+
+    // The dashboard reads the same totals, so listing reversals must not have leaked one in.
+    const res = await as.get('/api/v1/reports/dashboard').expect(200);
+    expect(res.body.month.collectedRupees).toBe(0);
   });
 
   it('requires both dates', async () => {

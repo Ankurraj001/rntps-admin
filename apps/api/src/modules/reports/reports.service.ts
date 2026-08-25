@@ -1,4 +1,5 @@
 import {
+  IST_TIME_ZONE,
   agingBucket,
   attendancePercentage,
   countsAsPresent,
@@ -110,29 +111,46 @@ export interface CollectionRow {
   mode: string;
   reference: string;
   amountRupees: number;
+  /** Listed for the trail, but not money the school kept. */
+  isReversed: boolean;
+  reversalReason: string;
+  /** IST calendar day the reversal was recorded, which is not the day of payment. */
+  reversedAt: string | null;
 }
 
 export interface CollectionReport {
   from: string;
   to: string;
   rows: CollectionRow[];
-  totals: { count: number; amountRupees: number; byMode: Record<string, number> };
+  totals: {
+    count: number;
+    amountRupees: number;
+    byMode: Record<string, number>;
+    /** Reversals in the range, reported separately so they are visible but never added in. */
+    reversedCount: number;
+    reversedRupees: number;
+  };
 }
 
 /**
- * Money actually received in a date range. Reversed payments are excluded from the
- * totals — otherwise a bounced cheque would inflate the day's collection.
+ * Money received in a date range, newest receipt first.
+ *
+ * **Reversed payments are listed but never counted.** A bounced cheque still had a receipt
+ * handed to a parent, so hiding it makes a real receipt number vanish from the record and
+ * leaves whoever is reconciling against the bank with an unexplained gap. Counting it would
+ * be worse — it would inflate the day's collection. So it appears as a row, flagged, and
+ * `totals` sees only what the school actually kept.
+ *
+ * A reversal is dated independently of the payment: a receipt taken on the 5th and reversed
+ * on the 20th still belongs to a 1st-to-10th report, shown as reversed. Matching on the
+ * reversal date instead would make the money appear collected in any report that closed
+ * before the cheque bounced.
  */
 export async function getCollectionReport(from: string, to: string): Promise<CollectionReport> {
   const rows = await Invoice.aggregate<CollectionRow>([
     { $match: { 'payments.paidAt': { $gte: from, $lte: to } } },
     { $unwind: '$payments' },
-    {
-      $match: {
-        'payments.paidAt': { $gte: from, $lte: to },
-        'payments.isReversed': { $ne: true },
-      },
-    },
+    { $match: { 'payments.paidAt': { $gte: from, $lte: to } } },
     {
       $project: {
         _id: 0,
@@ -145,19 +163,48 @@ export async function getCollectionReport(from: string, to: string): Promise<Col
         mode: '$payments.mode',
         reference: '$payments.reference',
         amountRupees: '$payments.amountRupees',
+        // Documents written before reversal existed have no field at all, which must read
+        // as "not reversed" rather than as null.
+        isReversed: { $eq: [{ $ifNull: ['$payments.isReversed', false] }, true] },
+        reversalReason: { $ifNull: ['$payments.reversalReason', ''] },
+        // Formatted here rather than sent as a Date: every other day in this system is an
+        // IST dateKey string, and a raw Date would shift by a day on a client west of UTC.
+        reversedAt: {
+          $cond: [
+            { $ifNull: ['$payments.reversedAt', false] },
+            { $dateToString: { date: '$payments.reversedAt', format: '%Y-%m-%d', timezone: IST_TIME_ZONE } },
+            null,
+          ],
+        },
       },
     },
-    { $sort: { paidAt: 1, receiptNo: 1 } },
+    // Newest first: the receipts an admin needs are the ones just taken, and a month-end
+    // range otherwise buries them under three hundred older rows.
+    { $sort: { paidAt: -1, receiptNo: -1 } },
   ]);
 
   const byMode: Record<string, number> = {};
   let amountRupees = 0;
+  let reversedCount = 0;
+  let reversedRupees = 0;
+
   for (const row of rows) {
+    if (row.isReversed) {
+      reversedCount += 1;
+      reversedRupees += row.amountRupees;
+      continue;
+    }
     byMode[row.mode] = (byMode[row.mode] ?? 0) + row.amountRupees;
     amountRupees += row.amountRupees;
   }
 
-  return { from, to, rows, totals: { count: rows.length, amountRupees, byMode } };
+  return {
+    from,
+    to,
+    rows,
+    // `count` counts receipts kept, so it always explains `amountRupees`.
+    totals: { count: rows.length - reversedCount, amountRupees, byMode, reversedCount, reversedRupees },
+  };
 }
 
 export interface DashboardSummary {

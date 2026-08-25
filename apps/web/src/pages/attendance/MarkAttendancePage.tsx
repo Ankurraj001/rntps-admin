@@ -1,5 +1,6 @@
 import {
   ATTENDANCE_LABELS,
+  ATTENDANCE_SHORT,
   ATTENDANCE_STATUSES,
   CLASS_CODES,
   attendancePercentage,
@@ -20,12 +21,18 @@ import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/F
 import { Input, Select } from '@/components/ui/Field';
 import { cn } from '@/lib/utils';
 
-/** Keyboard shortcut for each status, so a class can be marked without the mouse. */
-const SHORTCUT: Record<string, AttendanceStatus> = {
-  p: 'PRESENT',
-  a: 'ABSENT',
-  h: 'HOLIDAY',
-};
+/**
+ * Keyboard shortcut for each status, so a class can be marked without the mouse.
+ *
+ * Derived from `ATTENDANCE_SHORT` rather than written out, so the bound keys, the letters
+ * named in the hint above the roster and the statuses themselves cannot drift apart. They
+ * had: the hint went on advertising keys for two statuses that no longer exist.
+ */
+const SHORTCUT: Record<string, AttendanceStatus> = Object.fromEntries(
+  ATTENDANCE_STATUSES.map((status) => [ATTENDANCE_SHORT[status].toLowerCase(), status]),
+);
+
+const SHORTCUT_HINT = ATTENDANCE_STATUSES.map((status) => ATTENDANCE_SHORT[status]).join(', ');
 
 const TONE: Record<AttendanceStatus, string> = {
   PRESENT: 'bg-emerald-600 text-white',
@@ -135,7 +142,7 @@ export function MarkAttendancePage() {
     <>
       <PageHeader
         title="Mark attendance"
-        description="Everyone starts as present — mark the exceptions. Keys: P, A, L, V, H."
+        description={`Everyone starts as present — mark the exceptions. Keys: ${SHORTCUT_HINT}.`}
         action={
           <Button
             onClick={() => save.mutate()}

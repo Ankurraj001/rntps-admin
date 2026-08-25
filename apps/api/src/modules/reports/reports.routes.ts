@@ -74,7 +74,22 @@ reportRoutes.get(
         res,
         csvFilename('collection', `${from}-to-${to}`),
         toCsv(
-          ['Receipt', 'Date', 'Student ID', 'Name', 'Class', 'Fee month', 'Mode', 'Reference', 'Amount'],
+          [
+            'Receipt',
+            'Date',
+            'Student ID',
+            'Name',
+            'Class',
+            'Fee month',
+            'Mode',
+            'Reference',
+            'Amount',
+            // Without a status column, summing Amount in a spreadsheet would count a
+            // bounced cheque as money received.
+            'Status',
+            'Reversed on',
+            'Reversal reason',
+          ],
           report.rows.map((row) => [
             row.receiptNo,
             row.paidAt,
@@ -85,6 +100,9 @@ reportRoutes.get(
             row.mode,
             row.reference,
             rupeesForCsv(row.amountRupees),
+            row.isReversed ? 'Reversed' : 'Received',
+            row.reversedAt ?? '',
+            row.reversalReason,
           ]),
         ),
       );

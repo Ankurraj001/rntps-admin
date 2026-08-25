@@ -89,3 +89,20 @@ export function lastDayOfPeriod(period: string): string {
 export function academicYearShort(academicYear: string): string {
   return academicYear.slice(2, 4);
 }
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+/**
+ * Human label for a period, e.g. "2026-08" -> "August 2026".
+ *
+ * A static table rather than `Intl`, because a period is a bare year and month with no
+ * day: constructing a Date to format it would drag a timezone into a value that has none,
+ * and "2026-08" would render as July on a machine west of UTC.
+ */
+export function periodLabel(period: string): string {
+  const month = MONTH_NAMES[Number(period.slice(5, 7)) - 1];
+  return month ? `${month} ${period.slice(0, 4)}` : period;
+}

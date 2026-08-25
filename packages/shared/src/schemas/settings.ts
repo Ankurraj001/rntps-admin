@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ACADEMIC_YEAR_PATTERN, DATE_KEY_PATTERN } from '../date.js';
+import { MAX_MESSAGE_LENGTH } from './notifications.js';
 
 export const holidaySchema = z.object({
   dateKey: z.string().regex(DATE_KEY_PATTERN),
@@ -9,7 +10,7 @@ export const holidaySchema = z.object({
 export const messageTemplateSchema = z.object({
   key: z.string().trim().min(2).max(40),
   name: z.string().trim().min(2).max(80),
-  body: z.string().trim().min(10).max(1500),
+  body: z.string().trim().min(10).max(MAX_MESSAGE_LENGTH),
   isActive: z.boolean().default(true),
 });
 

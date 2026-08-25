@@ -34,13 +34,22 @@ export interface CollectionRow {
   mode: string;
   reference: string;
   amountRupees: number;
+  isReversed: boolean;
+  reversalReason: string;
+  reversedAt: string | null;
 }
 
 export interface CollectionReport {
   from: string;
   to: string;
   rows: CollectionRow[];
-  totals: { count: number; amountRupees: number; byMode: Record<string, number> };
+  totals: {
+    count: number;
+    amountRupees: number;
+    byMode: Record<string, number>;
+    reversedCount: number;
+    reversedRupees: number;
+  };
 }
 
 export interface DashboardSummary {

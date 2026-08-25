@@ -10,3 +10,4 @@ export * from './schemas/attendance.js';
 export * from './schemas/fees.js';
 export * from './schemas/notifications.js';
 export * from './schemas/passwordReset.js';
+export * from './feeMessage.js';

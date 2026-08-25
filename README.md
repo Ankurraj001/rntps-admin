@@ -309,10 +309,24 @@ fares**, percentage or flat concessions, invoice runs that preview before commit
 with sequential receipt numbers, reversal that keeps the record, voiding, and printable receipts.
 
 **Fee reminders** — WhatsApp click-to-chat batches grouped by guardian phone number, so a parent with
-three children gets one message rather than three. Resumable: progress is stored server-side.
+three children gets one message rather than three. Each child's bill is **itemised** — a line per fee
+head and charge, then the adjustments — and arrears are carried in. Resumable: progress is stored
+server-side.
 
 **Reports** — dues with aging buckets, collection by date range and mode, attendance defaulters. Each
 exports to CSV.
+
+The collection report lists **newest receipt first** and includes **reversed payments**, flagged and
+struck through rather than hidden. A bounced cheque still had a receipt handed to a parent, so
+dropping it makes a real receipt number vanish and leaves whoever is reconciling against the bank
+with an unexplained gap. It is never added in, though: `totals.count` and `totals.amountRupees` see
+only what the school kept, reversals are reported separately as `reversedCount` and `reversedRupees`,
+and the CSV carries a `Status` column so summing the amount column in a spreadsheet cannot count one.
+The dashboard's collection figure reads the same totals and is likewise unaffected.
+
+A reversal is dated independently of the payment: a receipt taken on the 5th and reversed on the 20th
+still belongs to a 1st-to-10th report, shown as reversed. Matching on the reversal date instead would
+make the money look collected in any report that closed before the cheque bounced.
 
 **Access** — admin and teacher roles. Teachers get a read-only student directory and attendance for
 their assigned classes only; anything touching money, users or settings is admin-only.
@@ -688,6 +702,87 @@ dues report that also totals ₹5,200, not ₹9,200.
 Older bills are listed oldest first and named, so *Exam fee* and *Dues carried forward* are
 distinguishable. Settled, voided and zero-balance invoices drop off entirely, and a voided invoice
 owes nothing itself while still showing what is outstanding elsewhere.
+
+
+## The WhatsApp fee demand
+
+The same numbers as the fee slip, laid out for a phone. **Fee reminders** → build a batch → work
+through the queue; each item opens a `wa.me` chat with the message pre-filled.
+
+````
+*R N Tagore Public School*
+Sahijana Road · Garhwa
+
+*MONTHLY FEE · August 2026*
+```
+Name: Aarav Sharma
+Std.: 4
+--------------------------
+Tuition Fee        ₹ 1,000
+Transport fee        ₹ 700
+Exam fee             ₹ 100
+Concession          -₹ 170
+Previous dues      ₹ 4,000
+Less paid           -₹ 500
+==========================
+Total payable      ₹ 5,130
+```
+_Fee should be paid from 1st to 10th of every month._
+````
+
+**Only the table is fenced.** WhatsApp renders a `` ``` `` block in monospace, which is what makes the
+amount column line up; a whole message in monospace reads small and cramped, so the school name, the
+month and the note stay as normal text. The rules are ASCII `-` and `=` rather than box drawing,
+because every `─` costs nine characters once percent-encoded into the URL.
+
+**Every row that is not ₹0 is shown, and no row that is.** A student who does not use the bus has no
+transport line at all rather than a `₹ 0` one. `Concession` and `Less paid` are not decoration —
+`lineItems` sum to *gross*, so without them the rows would not add up to the figure the parent is
+asked to pay. `feeMessage.test.ts` asserts that property directly: read the column down, and it
+totals the last row.
+
+**Previous dues is one row, and display only.** It is the same rule as the fee slip — those older
+invoices still stand, so re-charging them here would double the school's receivables. The consequence
+worth knowing: filtering a batch to August still counts July's unpaid bill, because a parent handed a
+figure that ignores it would pay the wrong amount. The filter decides *who* to chase; the amount then
+covers everything they owe.
+
+### Siblings get one message, itemised per child
+
+A block each, a subtotal each, then a family total. The month is named only when every child's
+itemised bill is for that same month — a filter can select July while the newest unpaid bill is
+August — and otherwise the header reads *Outstanding fees*.
+
+````
+```
+Aarav Sharma · Std. 4
+Tuition Fee        ₹ 1,000
+Previous dues      ₹ 4,000
+  Subtotal         ₹ 5,000
+--------------------------
+Ananya Sharma · Std. 1
+Tuition Fee          ₹ 400
+  Subtotal           ₹ 400
+==========================
+FAMILY TOTAL       ₹ 5,400
+```
+````
+
+A `wa.me` URL is capped rather than the message: encoding is nowhere near length-preserving — one `₹`
+becomes nine characters — so the character count says little about the thing that actually gets
+truncated. A two-child message is around 800 characters of URL against a 4,000 ceiling, so the
+fallback below is rare in practice. If a family does overflow it, the slip re-renders compact (one
+line per child, no breakdown), and only then is it trimmed by whole lines — with the fence re-closed,
+because an unclosed `` ``` `` makes WhatsApp render the rest of the conversation as code.
+
+**Wording lives under the settings key `FEE_DEMAND`**, which supersedes `FEE_DUE`. A new key rather
+than a new body under the old one: `seedSettings` leaves an existing settings document untouched and
+there is no template editor in the UI, so a deployment already holding a `FEE_DUE` row would have been
+pinned to the old flat summary for ever. The new key misses that row and falls through to the shipped
+default, so the format lands with no migration. Any existing `FEE_DUE` row is left alone and no longer
+read. Placeholders: `{{schoolName}}`, `{{schoolAddress}}`, `{{periodLabel}}`, `{{slip}}`, `{{note}}` —
+where `{{slip}}` is the fenced table and `{{note}}` is derived from `feeDueDayOfMonth`, so the
+payment window can never drift from the invoice due date.
 
 
 ## How a monthly invoice is calculated

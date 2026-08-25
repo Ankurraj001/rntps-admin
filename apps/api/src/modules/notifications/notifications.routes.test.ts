@@ -181,6 +181,99 @@ describe('POST /notifications', () => {
     expect(res.body.items[0].students[0].fullName).toBe('In Five');
   });
 
+  it('itemises the bill instead of quoting one lump sum', async () => {
+    await billClass('5');
+    await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    const res = await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
+    const message = res.body.items[0].renderedMessage as string;
+
+    expect(message).toContain('*RNTPS*');
+    expect(message).toContain('*MONTHLY FEE · August 2026*');
+    // The head's own name and amount, not just the total — this is the whole point.
+    expect(message).toContain('Tuition Fee');
+    expect(message).toContain('Total payable');
+    // Derived from feeDueDayOfMonth, so it cannot drift from the invoice due date.
+    expect(message).toContain('Fee should be paid from 1st to 10th of every month.');
+    // Monospace fence, opened and closed, or WhatsApp renders the rest of the chat as code.
+    expect(message.split('\n').filter((line) => line === '```')).toHaveLength(2);
+  });
+
+  it('gives a family one message with a block per child and a family total', async () => {
+    await billClass('5');
+    await billClass('2');
+    const elder = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await createStudent(
+      studentInput({ fullName: 'Ananya Sharma', classCode: '2', siblingOfStudentId: elder.studentId }),
+    );
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    const res = await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
+    const message = res.body.items[0].renderedMessage as string;
+
+    expect(message).toContain('Aarav Sharma · Std. 5');
+    expect(message).toContain('Ananya Sharma · Std. 2');
+    expect(message).toContain('FAMILY TOTAL');
+    expect(message.match(/Subtotal/g)).toHaveLength(2);
+    // A family sees a family total, never the single-child header.
+    expect(message).not.toContain('Name:');
+  });
+
+  it('carries arrears from earlier months into the message and the total', async () => {
+    await billClass('5');
+    await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-07' }).expect(200);
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    // Filtered to August alone, but July is still owed. A parent asked for a figure that
+    // ignores it would pay the wrong amount, so the older bill is shown and counted.
+    const res = await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
+    const item = res.body.items[0];
+
+    expect(item.totalDueRupees).toBe(2_400);
+    expect(item.renderedMessage).toContain('Previous dues');
+    // Shown, never re-charged: July's own invoice still stands, so the school's
+    // receivables must not count that ₹1,200 twice.
+    expect(item.invoiceIds).toHaveLength(2);
+  });
+
+  it('shows a part payment as a deduction so the rows explain the total', async () => {
+    await billClass('5');
+    const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    await as
+      .post(`/api/v1/fees/invoices/${student.studentId}:${PERIOD}/payments`)
+      .send({ amountRupees: 500, mode: 'CASH', paidAt: '2026-08-05' })
+      .expect(201);
+
+    const res = await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
+    const message = res.body.items[0].renderedMessage as string;
+
+    expect(message).toContain('Less paid');
+    expect(message).toContain('-₹ 500');
+    expect(message).toContain('₹ 700');
+  });
+
+  it('names no month when a family has children billed for different ones', async () => {
+    await billClass('5');
+    await billClass('2');
+    const elder = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await createStudent(
+      studentInput({ fullName: 'Ananya Sharma', classCode: '2', siblingOfStudentId: elder.studentId }),
+    );
+    // Only the elder is billed for August; the younger's newest unpaid bill is July.
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-07' }).expect(200);
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD, classCodes: ['5'] }).expect(200);
+
+    const res = await as.post('/api/v1/notifications').send({}).expect(201);
+    const message = res.body.items[0].renderedMessage as string;
+
+    // Naming one month would be a lie about the other child's bill.
+    expect(message).toContain('Outstanding fees');
+    expect(message).not.toContain('August 2026');
+  });
+
   it('is closed to teachers', async () => {
     const { header } = await teacherAuth();
     await request(app).post('/api/v1/notifications').set('Authorization', header).send({}).expect(403);

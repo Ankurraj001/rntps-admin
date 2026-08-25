@@ -1,10 +1,16 @@
 import {
-  MAX_MESSAGE_LENGTH,
+  FEE_DEMAND_TEMPLATE_KEY,
+  buildFeeSlip,
   buildWaLink,
-  formatINR,
+  fitWaMessage,
+  ordinalDay,
+  periodLabel,
   renderTemplate,
   toDateKey,
+  waUrlFits,
   type CreateBatchPayload,
+  type FeeMessageChild,
+  type FeeSlipMode,
   type NotificationBatchDto,
   type NotificationItemStatus,
 } from '@rntps/shared';
@@ -14,12 +20,18 @@ import { Invoice, type InvoiceDoc } from '../../models/Invoice.js';
 import { Notification, type NotificationDoc, type NotificationItemSub } from '../../models/Notification.js';
 import { Student, type StudentDoc } from '../../models/Student.js';
 
+/**
+ * Only the table is fenced. WhatsApp renders a ``` block in monospace, which is what makes
+ * the amount column line up, but a whole message in monospace reads small and cramped — so
+ * the school name, the month and the note stay as normal text.
+ */
 const DEFAULT_TEMPLATE = [
-  'Dear {{guardianName}},',
-  'Fee due at {{schoolName}} for {{period}}:',
-  '{{studentLines}}',
-  'Total: {{familyTotal}}',
-  'Kindly pay by {{dueDate}}.',
+  '*{{schoolName}}*',
+  '{{schoolAddress}}',
+  '',
+  '*MONTHLY FEE · {{periodLabel}}*',
+  '{{slip}}',
+  '_{{note}}_',
 ].join('\n');
 
 function toDto(doc: NotificationDoc): NotificationBatchDto {
@@ -58,6 +70,14 @@ function toDto(doc: NotificationDoc): NotificationBatchDto {
 
 type ReachableStudent = Pick<StudentDoc, '_id' | 'fullName' | 'classCode' | 'familyId' | 'guardians'>;
 
+/** One child's share of a family message, plus what the header needs to label it. */
+interface ChildBill {
+  studentId: string;
+  /** Period of the invoice being itemised — not necessarily the filtered period. */
+  period: string;
+  bill: FeeMessageChild;
+}
+
 /**
  * Builds one message per guardian phone number.
  *
@@ -65,6 +85,10 @@ type ReachableStudent = Pick<StudentDoc, '_id' | 'fullName' | 'classCode' | 'fam
  * messaging, so a parent with three children in school gets one message listing all
  * three instead of three separate messages. wa.me needs a human click per message, so
  * every duplicate avoided is real work saved.
+ *
+ * Each child's bill is itemised — a line per fee head and absorbed charge, then the
+ * adjustments — because a parent handed a single figure cannot tell what it is made of,
+ * and the school ends up answering the phone instead.
  */
 export async function createBatch(
   payload: CreateBatchPayload,
@@ -78,13 +102,39 @@ export async function createBatch(
   if (payload.classCodes?.length) invoiceFilter.classCodeSnapshot = { $in: payload.classCodes };
   if (payload.overdueOnly) invoiceFilter.dueDate = { $lt: today };
 
-  const invoices = await Invoice.find(invoiceFilter).lean<InvoiceDoc[]>();
-  if (invoices.length === 0) throw AppError.badRequest('No unpaid invoices match those filters');
+  const matched = await Invoice.find(invoiceFilter).select('studentId totalRupees paidRupees').lean<
+    Pick<InvoiceDoc, '_id' | 'studentId' | 'totalRupees' | 'paidRupees'>[]
+  >();
+  const owing = matched.filter((invoice) => invoice.totalRupees - invoice.paidRupees > 0);
+  if (owing.length === 0) throw AppError.badRequest('No unpaid invoices match those filters');
 
-  const students = await Student.find({ _id: { $in: [...new Set(invoices.map((i) => i.studentId))] } })
+  const studentIds = [...new Set(owing.map((invoice) => invoice.studentId))];
+
+  /**
+   * The filter decides *who* to chase; the amounts then have to cover everything those
+   * students owe, arrears included, or the itemised rows would not add up to the figure
+   * the parent is asked to pay.
+   *
+   * One batched query rather than a `getFeeSlip()` call per student, which would be a
+   * round trip each — a couple of hundred of them on a month-end run.
+   */
+  const unpaid = await Invoice.find({
+    studentId: { $in: studentIds },
+    status: { $in: ['DUE', 'PARTIAL'] },
+  }).lean<InvoiceDoc[]>();
+
+  const billsByStudent = new Map<string, InvoiceDoc[]>();
+  for (const invoice of unpaid) {
+    if (invoice.totalRupees - invoice.paidRupees <= 0) continue;
+    const list = billsByStudent.get(invoice.studentId);
+    if (list) list.push(invoice);
+    else billsByStudent.set(invoice.studentId, [invoice]);
+  }
+  for (const list of billsByStudent.values()) list.sort((a, b) => a.period.localeCompare(b.period));
+
+  const students = await Student.find({ _id: { $in: studentIds } })
     .select('fullName classCode familyId guardians')
     .lean<ReachableStudent[]>();
-  const studentById = new Map(students.map((s) => [s._id, s]));
 
   const unreachable: NotificationDoc['unreachable'] = [];
   const grouped = new Map<
@@ -93,17 +143,17 @@ export async function createBatch(
       guardianName: string;
       guardianPhone: string;
       familyIds: Set<string>;
-      students: Map<string, { studentId: string; fullName: string; classCode: string; dueRupees: number }>;
+      children: Map<string, ChildBill>;
       invoiceIds: string[];
     }
   >();
 
-  for (const invoice of invoices) {
-    const balance = invoice.totalRupees - invoice.paidRupees;
-    if (balance <= 0) continue;
-
-    const student = studentById.get(invoice.studentId);
-    if (!student) continue;
+  // Iterating students rather than invoices: a student with three unpaid months is one
+  // child on one message, and one entry in `unreachable` if nobody can be reached.
+  for (const student of students) {
+    const bills = billsByStudent.get(student._id) ?? [];
+    const current = bills[bills.length - 1];
+    if (!current) continue;
 
     const guardian =
       student.guardians.find((g) => g.isPrimary && !g.whatsappOptOut) ??
@@ -119,66 +169,93 @@ export async function createBatch(
       continue;
     }
 
+    // The newest unpaid bill is the one itemised; everything older collapses into a single
+    // "Previous dues" row. Those older invoices still stand on their own — showing them
+    // here does not re-charge them, which is the rule the printed fee slip follows too.
+    const previousDuesRupees = bills
+      .slice(0, -1)
+      .reduce((sum, invoice) => sum + (invoice.totalRupees - invoice.paidRupees), 0);
+    const balance = current.totalRupees - current.paidRupees;
+
     let group = grouped.get(guardian.phone);
     if (!group) {
       group = {
         guardianName: guardian.name,
         guardianPhone: guardian.phone,
         familyIds: new Set(),
-        students: new Map(),
+        children: new Map(),
         invoiceIds: [],
       };
       grouped.set(guardian.phone, group);
     }
 
     group.familyIds.add(student.familyId);
-    group.invoiceIds.push(invoice._id);
-
-    // One student can owe across several months; the message shows a single total.
-    const existing = group.students.get(student._id);
-    if (existing) existing.dueRupees += balance;
-    else {
-      group.students.set(student._id, {
-        studentId: student._id,
+    group.invoiceIds.push(...bills.map((invoice) => invoice._id));
+    group.children.set(student._id, {
+      studentId: student._id,
+      period: current.period,
+      bill: {
         fullName: student.fullName,
         classCode: student.classCode,
-        dueRupees: balance,
-      });
-    }
+        lines: current.lineItems.map((line) => ({ name: line.name, amountRupees: line.amountRupees })),
+        concessionRupees: current.concessionRupees,
+        previousDuesRupees,
+        paidRupees: current.paidRupees,
+        totalRupees: balance + previousDuesRupees,
+      },
+    });
   }
 
   const template =
-    settings.templates.find((t) => t.key === 'FEE_DUE' && t.isActive)?.body ?? DEFAULT_TEMPLATE;
+    settings.templates.find((t) => t.key === FEE_DEMAND_TEMPLATE_KEY && t.isActive)?.body ?? DEFAULT_TEMPLATE;
+  const note = `Fee should be paid from 1st to ${ordinalDay(settings.feeDueDayOfMonth)} of every month.`;
 
   const items: NotificationItemSub[] = [];
   for (const group of grouped.values()) {
-    const students = [...group.students.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
-    const totalDueRupees = students.reduce((sum, s) => sum + s.dueRupees, 0);
+    const children = [...group.children.values()].sort((a, b) =>
+      a.bill.fullName.localeCompare(b.bill.fullName),
+    );
+    const totalDueRupees = children.reduce((sum, child) => sum + child.bill.totalRupees, 0);
     if (totalDueRupees < payload.minDueRupees) continue;
 
-    const periodLabel = payload.period ?? 'outstanding fees';
-    const dueDates = group.invoiceIds
-      .map((id) => invoices.find((i) => i._id === id)?.dueDate)
-      .filter((d): d is string => Boolean(d))
-      .sort();
+    // Truthful whatever the filter was: name a month only when every child's itemised bill
+    // is for that same month. A filter can select July while the newest unpaid bill — the
+    // one actually itemised — is August.
+    const periods = new Set(children.map((child) => child.period));
+    const [onlyPeriod] = [...periods];
+    const label = periods.size === 1 && onlyPeriod ? periodLabel(onlyPeriod) : 'Outstanding fees';
 
-    const message = renderTemplate(template, {
-      guardianName: group.guardianName,
-      schoolName: settings.schoolName,
-      period: periodLabel,
-      studentLines: students
-        .map((s) => `- ${s.fullName} (${s.classCode}): ${formatINR(s.dueRupees)}`)
-        .join('\n'),
-      familyTotal: formatINR(totalDueRupees),
-      dueDate: dueDates[0] ?? '',
-    }).slice(0, MAX_MESSAGE_LENGTH);
+    const render = (mode: FeeSlipMode): string =>
+      renderTemplate(template, {
+        schoolName: settings.schoolName,
+        schoolAddress: settings.schoolAddress,
+        periodLabel: label,
+        slip: buildFeeSlip(
+          children.map((child) => child.bill),
+          totalDueRupees,
+          mode,
+        ),
+        note,
+      })
+        // A school with no address on record would otherwise leave a gap under its name.
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    let message = render('full');
+    if (!waUrlFits(group.guardianPhone, message)) message = render('compact');
+    message = fitWaMessage(group.guardianPhone, message);
 
     items.push({
       key: group.guardianPhone,
       guardianName: group.guardianName,
       guardianPhone: group.guardianPhone,
       familyIds: [...group.familyIds],
-      students,
+      students: children.map((child) => ({
+        studentId: child.studentId,
+        fullName: child.bill.fullName,
+        classCode: child.bill.classCode,
+        dueRupees: child.bill.totalRupees,
+      })),
       invoiceIds: group.invoiceIds,
       totalDueRupees,
       renderedMessage: message,

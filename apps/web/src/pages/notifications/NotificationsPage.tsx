@@ -282,7 +282,9 @@ function QueueView({ batchId, onClose }: { batchId: string; onClose: () => void 
                     </div>
                   </div>
 
-                  <pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs text-slate-700">
+                  {/* Monospace, because the fee table is aligned with spaces — the admin should see
+                      the same columns the parent will. */}
+                  <pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700">
                     {item.renderedMessage}
                   </pre>
 

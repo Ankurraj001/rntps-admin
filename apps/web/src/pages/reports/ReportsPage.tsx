@@ -207,10 +207,29 @@ function CollectionReport() {
                 </CardBody>
               </Card>
             ))}
+            {/* Only when there is something to report — an amber card on every clean month
+                would read as a problem where there is none. */}
+            {collection.data.totals.reversedCount > 0 && (
+              <Card className="flex-1 border-amber-300 bg-amber-50">
+                <CardBody>
+                  <p className="text-xs uppercase tracking-wide text-amber-800">Reversed</p>
+                  <p className="text-2xl font-semibold text-amber-900">
+                    {formatINR(collection.data.totals.reversedRupees)}
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    {collection.data.totals.reversedCount} receipt
+                    {collection.data.totals.reversedCount === 1 ? '' : 's'} · not collected
+                  </p>
+                </CardBody>
+              </Card>
+            )}
           </div>
 
           <Card>
-            <CardHeader title="Receipts" description="Reversed payments are excluded." />
+            <CardHeader
+              title="Receipts"
+              description="Newest first. Reversed receipts are listed for the record but not counted as collected."
+            />
             {collection.data.rows.length === 0 ? (
               <EmptyState title="No payments in this range" />
             ) : (
@@ -228,13 +247,37 @@ function CollectionReport() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {collection.data.rows.map((row) => (
-                      <tr key={row.receiptNo} className="hover:bg-slate-50">
+                      <tr key={row.receiptNo} className={cn('hover:bg-slate-50', row.isReversed && 'bg-amber-50/40')}>
                         <td className="px-5 py-3 font-mono text-xs">{row.receiptNo}</td>
                         <td className="px-5 py-3 text-slate-600">{formatDate(row.paidAt)}</td>
-                        <td className="px-5 py-3">{row.studentName}</td>
+                        <td className="px-5 py-3">
+                          {row.studentName}
+                          {row.isReversed && (
+                            <span className="ml-2 align-middle">
+                              <Badge tone="amber">Reversed</Badge>
+                            </span>
+                          )}
+                          {/* The reason is required when reversing, so it always says
+                              something useful about why the money is not there. */}
+                          {row.isReversed && row.reversalReason && (
+                            <span className="block text-xs text-amber-800">
+                              {row.reversalReason}
+                              {row.reversedAt && ` · ${formatDate(row.reversedAt)}`}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-slate-600">{row.period}</td>
                         <td className="px-5 py-3 text-slate-600">{row.mode}</td>
-                        <td className="px-5 py-3 text-right font-medium tabular-nums">{formatINR(row.amountRupees)}</td>
+                        {/* Struck through as well as badged: the amount is the cell someone
+                            reads when adding up a column by eye. */}
+                        <td
+                          className={cn(
+                            'px-5 py-3 text-right font-medium tabular-nums',
+                            row.isReversed && 'text-slate-400 line-through',
+                          )}
+                        >
+                          {formatINR(row.amountRupees)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

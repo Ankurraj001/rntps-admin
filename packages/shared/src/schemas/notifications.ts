@@ -5,6 +5,17 @@ import { PERIOD_PATTERN } from '../date.js';
 export const NOTIFICATION_TYPES = ['FEE_DUE'] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
+/**
+ * Settings key for the monthly fee-demand template, replacing the older `FEE_DUE`.
+ *
+ * A new key rather than a new body under the old one: `seedSettings` leaves an existing
+ * settings document untouched and there is no template editor in the UI, so a deployment
+ * already holding a `FEE_DUE` row would otherwise be pinned to the old flat summary for
+ * ever. A new key misses that row and falls through to the service default, so the
+ * itemised format lands with no migration. The old row is left alone but no longer read.
+ */
+export const FEE_DEMAND_TEMPLATE_KEY = 'FEE_DEMAND';
+
 export const NOTIFICATION_ITEM_STATUSES = ['PENDING', 'OPENED', 'SENT', 'SKIPPED'] as const;
 export type NotificationItemStatus = (typeof NOTIFICATION_ITEM_STATUSES)[number];
 
@@ -65,8 +76,11 @@ export function buildWaLink(phone: string, message: string): string {
 }
 
 /**
- * wa.me has no documented limit, but very long URLs get truncated by browsers and by
- * WhatsApp itself. Keeping the body well under this leaves room for the encoded overhead.
+ * Ceiling on a stored message template body.
+ *
+ * The runtime guard on an outgoing message is `MAX_WA_URL_LENGTH` below, which measures
+ * the encoded URL — the thing that actually gets truncated. This one just stops a template
+ * from being edited into something that could never fit.
  */
 export const MAX_MESSAGE_LENGTH = 1500;
 
@@ -75,4 +89,43 @@ export function renderTemplate(template: string, values: Record<string, string>)
   return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] ?? '' : match,
   );
+}
+
+/**
+ * Ceiling on the whole `wa.me` URL, not just the message.
+ *
+ * The percent-encoded text is what actually travels, and encoding is far from
+ * length-preserving: every `₹` becomes `%E2%82%B9`, nine characters for one. So a message
+ * measured in characters says little about the URL carrying it, and the URL is what
+ * browsers and WhatsApp Web truncate.
+ */
+export const MAX_WA_URL_LENGTH = 4000;
+
+export function waUrlFits(phone: string, message: string): boolean {
+  return buildWaLink(phone, message).length <= MAX_WA_URL_LENGTH;
+}
+
+/** Re-closes a monospace fence that trimming left open. */
+function balanceFence(lines: string[]): string[] {
+  const isOpen = lines.filter((line) => line.trim() === '```').length % 2 === 1;
+  return isOpen ? [...lines, '```'] : lines;
+}
+
+/**
+ * Trims a message from the end until its `wa.me` URL fits, dropping whole lines.
+ *
+ * Whole lines rather than characters, and the fence is re-closed afterwards: an unclosed
+ * ``` makes WhatsApp render the rest of the conversation as code, so a blindly sliced
+ * fee slip is worse than a short one.
+ */
+export function fitWaMessage(phone: string, message: string): string {
+  if (waUrlFits(phone, message)) return message;
+
+  const lines = message.split('\n');
+  while (lines.length > 1) {
+    lines.pop();
+    const trimmed = balanceFence(lines).join('\n');
+    if (waUrlFits(phone, trimmed)) return trimmed;
+  }
+  return balanceFence(lines).join('\n');
 }
