@@ -19,6 +19,16 @@
   # from apps/api/dist and only pulls what it imports.
   NPM_FLAGS = "--include=dev"
 
+  # Secrets scanning compares every configured environment variable's *value* against the
+  # repo and build output, and fails the deploy on a match. These keys hold no secret, but
+  # their values are documented in README.md and .env.example — as they should be, since a
+  # setup guide that cannot name the SMTP host is useless. Listing them here keeps scanning
+  # switched on for the values that do matter: MONGODB_URI, JWT_SECRET, SMTP_PASS and
+  # RESEND_API_KEY are deliberately absent, so a genuine leak still fails the build.
+  #
+  # Never add a credential-bearing key to this list. Redact it from the docs instead.
+  SECRETS_SCAN_OMIT_KEYS = "SMTP_HOST,SMTP_PORT,MAIL_FROM,APP_BASE_URL,CORS_ORIGINS,NODE_ENV"
+
 [functions]
   node_bundler = "esbuild"
   # Mongoose resolves drivers and BSON at runtime, which esbuild cannot follow. Shipping
