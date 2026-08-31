@@ -5,7 +5,7 @@ import { z } from 'zod';
  * Config is validated at boot so a misconfigured deployment fails loudly on start
  * rather than at the first request that happens to need the missing value.
  */
-const envSchema = z.object({
+const baseEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
@@ -43,31 +43,67 @@ const envSchema = z.object({
   APP_BASE_URL: z.string().url().default('http://localhost:5173'),
 
   /**
-   * SMTP is optional. Left unset, password-reset emails are logged instead of sent, so
-   * local development works without credentials and the app still boots in production
-   * with the feature simply unavailable.
+   * Resend is the preferred transport: one credential, and its API reports a per-send
+   * result, so a failed delivery is something the caller can act on rather than guess at.
+   */
+  RESEND_API_KEY: z.string().optional(),
+
+  /**
+   * SMTP is the fallback — Gmail, Brevo, or Resend's own smtp.resend.com. With neither this
+   * nor RESEND_API_KEY set, password-reset emails are logged instead of sent, so local
+   * development works without credentials and the app still boots in production with the
+   * feature simply unavailable.
    */
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  MAIL_FROM: z.string().optional(),
+
+  /**
+   * Defaults to Resend's shared sender, so a developer holding only an API key can send
+   * without owning a domain. That address delivers ONLY to the address the Resend account
+   * was registered with — every other recipient is refused with a 403 — so production must
+   * override it. Enforced below.
+   */
+  MAIL_FROM: z.string().default('RNTPS Admin <onboarding@resend.dev>'),
 
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
 
-  /**
-   * Keeps a readable copy of each password alongside the hash, so an admin can look one
-   * up and tell a teacher what it is.
-   *
-   * Defaults to false. Enabling it means a leak of the database — or of the connection
-   * string — hands over every staff password in usable form, and staff reuse passwords
-   * elsewhere. Authentication still uses the hash; this field is only ever read, never
-   * verified against.
-   */
-  STORE_PLAINTEXT_PASSWORDS: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((value) => value === 'true'),
+  /** Invitations are handed out ahead of time, so they outlive a self-service reset. */
+  INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(72),
+});
+
+/**
+ * Checks that only matter once real users are involved. Both failures are silent in
+ * production otherwise: the app boots, and the first password reset is the thing that
+ * breaks.
+ */
+const envSchema = baseEnvSchema.superRefine((config, ctx) => {
+  if (config.NODE_ENV !== 'production') return;
+
+  // Netlify does not set APP_BASE_URL for us, so an unset value ships localhost links to
+  // real inboxes — reachable by nobody.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(config.APP_BASE_URL)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['APP_BASE_URL'],
+      message: 'must be the public origin in production, not localhost — reset links would be unreachable',
+    });
+  }
+
+  // Resend refuses every recipient but the account owner from resend.dev, so leaving the
+  // default in place means the first real reset dies with a 403 nobody sees.
+  const canSend =
+    Boolean(config.RESEND_API_KEY) ||
+    Boolean(config.SMTP_HOST && config.SMTP_USER && config.SMTP_PASS);
+  if (canSend && /resend\.dev>?\s*$/i.test(config.MAIL_FROM)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['MAIL_FROM'],
+      message:
+        'onboarding@resend.dev only delivers to your own Resend account address — set an address on a verified domain',
+    });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -83,5 +119,7 @@ export const env = parsed.data;
 export const isProduction = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 
-/** True when enough SMTP settings are present to actually send mail. */
-export const isMailConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+/** True when a transport has enough settings to attempt a send. */
+export const isResendConfigured = Boolean(env.RESEND_API_KEY);
+export const isSmtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+export const isMailConfigured = isResendConfigured || isSmtpConfigured;

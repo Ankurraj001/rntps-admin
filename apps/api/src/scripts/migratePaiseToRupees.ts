@@ -232,15 +232,6 @@ async function migrateAttendanceStatuses(): Promise<{ late: number; leave: numbe
  * credential-reset hash that serves no purpose is better not kept, and before the app
  * checked whether it could send mail it minted these even with no SMTP configured.
  */
-async function clearExpiredResetTokens(): Promise<number> {
-  const col = db().collection('users');
-  const filter = { passwordResetExpiresAt: { $ne: null, $lt: new Date() } };
-  if (DRY_RUN) return col.countDocuments(filter);
-  const res = await col.updateMany(filter, {
-    $set: { passwordResetTokenHash: null, passwordResetExpiresAt: null },
-  });
-  return res.modifiedCount;
-}
 
 async function main(): Promise<void> {
   await connectDatabase();
@@ -252,10 +243,8 @@ async function main(): Promise<void> {
   const notifications = await migrateNotifications();
   const invoiceKinds = await backfillInvoiceKind();
   const attendance = await migrateAttendanceStatuses();
-  const expiredResetTokens = await clearExpiredResetTokens();
-
   logger.info(
-    { dryRun: DRY_RUN, chargeCounter, feeStructures, invoices, students, notifications, invoiceKinds, attendance, expiredResetTokens },
+    { dryRun: DRY_RUN, chargeCounter, feeStructures, invoices, students, notifications, invoiceKinds, attendance },
     DRY_RUN ? 'dry run complete — nothing was written' : 'paise -> rupees migration complete',
   );
 

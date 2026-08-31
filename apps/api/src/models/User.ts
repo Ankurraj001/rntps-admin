@@ -31,14 +31,26 @@ export interface UserDoc {
   lockedUntil: Date | null;
   lastLoginAt: Date | null;
   passwordChangedAt: Date | null;
-  /**
-   * Readable copy of the password, kept only when STORE_PLAINTEXT_PASSWORDS is on.
-   * Never used to authenticate — verification always goes through passwordHash.
-   */
-  plaintextPassword: string | null;
   /** SHA-256 of the reset token, never the token itself. Single use. */
   passwordResetTokenHash: string | null;
   passwordResetExpiresAt: Date | null;
+  /**
+   * What the outstanding link is for. Only changes the wording of the email and the page
+   * — never what the token authorises, so a tampered `mode` in the URL buys nothing.
+   */
+  passwordResetPurpose: 'invite' | 'reset' | null;
+  /**
+   * Per-account throttle for reset requests. The IP limiter in front of the route is
+   * per-container on serverless, so an attacker rotating addresses could otherwise flood
+   * one inbox; this counter is shared by every container.
+   */
+  passwordResetRequestedAt: Date | null;
+  passwordResetRequestCount: number;
+  /**
+   * When the holder last proved they control this address, by completing an emailed link.
+   * Null means nobody has ever confirmed it — an admin may simply have mistyped it.
+   */
+  emailVerifiedAt: Date | null;
   refreshTokens: RefreshTokenSub[];
   createdBy: string | null;
   createdAt: Date;
@@ -73,12 +85,13 @@ const userSchema = new Schema<UserDoc>(
     lockedUntil: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },
     passwordChangedAt: { type: Date, default: null },
-    // select:false so it cannot reach a response by accident. Reading it requires the
-    // dedicated, audited endpoint.
-    plaintextPassword: { type: String, default: null, select: false },
     // select:false so a stray query cannot hand a live reset token to a response.
     passwordResetTokenHash: { type: String, default: null, select: false },
     passwordResetExpiresAt: { type: Date, default: null, select: false },
+    passwordResetPurpose: { type: String, enum: ['invite', 'reset'], default: null, select: false },
+    passwordResetRequestedAt: { type: Date, default: null, select: false },
+    passwordResetRequestCount: { type: Number, default: 0, min: 0, select: false },
+    emailVerifiedAt: { type: Date, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [], select: false },
     createdBy: { type: String, default: null },
   },
@@ -88,8 +101,13 @@ const userSchema = new Schema<UserDoc>(
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ 'refreshTokens.tokenHash': 1 });
 userSchema.index({ role: 1, isActive: 1 });
-// Sparse: only the handful of users with a reset in flight are indexed.
-userSchema.index({ passwordResetTokenHash: 1 }, { sparse: true });
+// Partial, not sparse: the field defaults to null rather than being absent, so `sparse`
+// would still index every user. Matching on $type narrows it to the handful with a reset
+// actually in flight.
+userSchema.index(
+  { passwordResetTokenHash: 1 },
+  { partialFilterExpression: { passwordResetTokenHash: { $type: 'string' } } },
+);
 
 export const User = model<UserDoc>('User', userSchema);
 export type UserHydrated = HydratedDocument<UserDoc>;

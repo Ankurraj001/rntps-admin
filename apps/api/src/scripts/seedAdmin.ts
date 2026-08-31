@@ -4,7 +4,6 @@ import { emailSchema } from '@rntps/shared';
 import { connectDatabase, disconnectDatabase } from '../config/db.js';
 import { logger } from '../config/logger.js';
 import { generateTemporaryPassword, hashPassword } from '../lib/password.js';
-import { plaintextFieldFor } from '../lib/plaintextPassword.js';
 import { User } from '../models/User.js';
 
 /**
@@ -44,7 +43,6 @@ async function main(): Promise<void> {
     name: name.trim(),
     email,
     passwordHash: await hashPassword(temporaryPassword),
-    ...plaintextFieldFor(temporaryPassword),
     role: 'ADMIN',
     assignedClasses: [],
     isActive: true,

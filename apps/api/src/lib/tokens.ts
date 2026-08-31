@@ -78,6 +78,23 @@ export function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+/**
+ * Password-reset and invitation tokens.
+ *
+ * Same construction as a refresh token, but deliberately its own function: these are two
+ * unrelated credentials that happened to share a generator, and a future change to how
+ * sessions are minted must not silently alter how reset links are minted.
+ */
+export function generatePasswordResetToken(): { token: string; tokenHash: string } {
+  const token = randomBytes(32).toString('base64url');
+  return { token, tokenHash: hashPasswordResetToken(token) };
+}
+
+/** SHA-256, for the same reason as refresh tokens: the input is already high-entropy. */
+export function hashPasswordResetToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 export function newTokenFamily(): string {
   return randomUUID();
 }

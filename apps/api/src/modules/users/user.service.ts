@@ -1,10 +1,38 @@
 import type { CreateUserPayload, UpdateUserPayload, UserDto } from '@rntps/shared';
+import { randomBytes } from 'node:crypto';
 import { AppError } from '../../lib/AppError.js';
+import { canSendMail } from '../../lib/mailer.js';
 import { generateTemporaryPassword, hashPassword } from '../../lib/password.js';
-import { isPlaintextStorageEnabled, plaintextFieldFor } from '../../lib/plaintextPassword.js';
 import { isDuplicateKeyError } from '../../lib/mongoErrors.js';
-import { User, type UserDoc } from '../../models/User.js';
-import { toUserDto } from '../auth/auth.service.js';
+import { User, type UserDoc, type UserHydrated } from '../../models/User.js';
+import {
+  clearPasswordResetToken,
+  issuePasswordSetupLink,
+  toUserDto,
+} from '../auth/auth.service.js';
+
+/**
+ * A password nobody holds.
+ *
+ * When an account is set up by emailed link there is no password yet, but the schema
+ * requires a hash. Hashing 32 random bytes that are immediately discarded gives a real,
+ * unguessable hash rather than a marker value some future code path might treat as
+ * "empty" and skip verification for.
+ */
+async function unusablePasswordHash(): Promise<string> {
+  return hashPassword(randomBytes(32).toString('base64url'));
+}
+
+/**
+ * `temporaryPassword` is non-null only on the fallback path, where mail could not carry a
+ * setup link. `invited` tells the UI which happened, so it can say so rather than leaving
+ * the admin guessing whether the user has been contacted.
+ */
+export interface CreateUserResult {
+  user: UserDto;
+  temporaryPassword: string | null;
+  invited: boolean;
+}
 
 export async function listUsers(): Promise<UserDto[]> {
   const users = await User.find().sort({ name: 1 }).lean<UserDoc[]>();
@@ -14,21 +42,25 @@ export async function listUsers(): Promise<UserDto[]> {
 export async function createUser(
   payload: CreateUserPayload,
   actorId: string | null,
-): Promise<{ user: UserDto; temporaryPassword: string | null }> {
+): Promise<CreateUserResult> {
   // Admins reach every class, so a stored list would only ever drift out of date.
   const assignedClasses = payload.role === 'ADMIN' ? [] : payload.assignedClasses;
 
-  const temporaryPassword = payload.password ? null : generateTemporaryPassword();
-  const password = payload.password ?? (temporaryPassword as string);
-  const passwordHash = await hashPassword(password);
+  // An admin who typed a password already knows it, so there is nothing to email; if mail
+  // works we invite instead, and nobody — including the admin — ever sees the password.
+  const inviteByEmail = !payload.password && canSendMail();
+
+  // Only needed when we can neither email a link nor use a password the admin supplied.
+  const fallbackPassword = inviteByEmail || payload.password ? null : generateTemporaryPassword();
 
   try {
     const created = await User.create({
       name: payload.name,
       email: payload.email,
       phone: payload.phone ?? '',
-      passwordHash,
-      ...plaintextFieldFor(password),
+      passwordHash: inviteByEmail
+        ? await unusablePasswordHash()
+        : await hashPassword((payload.password ?? fallbackPassword) as string),
       role: payload.role,
       assignedClasses,
       isActive: true,
@@ -38,13 +70,34 @@ export async function createUser(
       createdBy: actorId,
     });
 
-    return { user: toUserDto(created.toObject()), temporaryPassword };
+    if (inviteByEmail) {
+      const { sent } = await issuePasswordSetupLink(created, 'invite');
+      if (sent)
+        return { user: toUserDto(created.toObject()), temporaryPassword: null, invited: true };
+
+      // Mail was configured but the send failed. Rather than leave an account nobody can
+      // reach, fall back to the one-time handover the admin can read out.
+      const temporaryPassword = await assignTemporaryPassword(created);
+      return { user: toUserDto(created.toObject()), temporaryPassword, invited: false };
+    }
+
+    return { user: toUserDto(created.toObject()), temporaryPassword: fallbackPassword, invited: false };
   } catch (error) {
     if (isDuplicateKeyError(error)) {
       throw AppError.conflict(`${payload.email} already has an account`);
     }
     throw error;
   }
+}
+
+/** Sets a fresh generated password on the user and returns it for one-time handover. */
+async function assignTemporaryPassword(user: UserHydrated): Promise<string> {
+  const temporaryPassword = generateTemporaryPassword();
+  user.passwordHash = await hashPassword(temporaryPassword);
+  user.mustChangePassword = true;
+  user.passwordChangedAt = new Date();
+  await user.save();
+  return temporaryPassword;
 }
 
 export async function updateUser(
@@ -109,30 +162,56 @@ export async function setUserActive(
   return toUserDto(user.toObject());
 }
 
+/**
+ * Resets another user's password on their behalf.
+ *
+ * Prefers emailing a setup link, so the new password is chosen by its owner and never
+ * passes through the admin. Falls back to a one-time generated password when mail is
+ * unavailable or the send fails, which is also the break-glass path when a user has lost
+ * access to their inbox.
+ */
 export async function resetPassword(
   userId: string,
   explicitPassword: string | undefined,
-): Promise<{ user: UserDto; temporaryPassword: string | null }> {
-  const user = await User.findById(userId).select('+refreshTokens +plaintextPassword');
+): Promise<CreateUserResult> {
+  const user = await User.findById(userId).select(
+    '+refreshTokens +passwordResetTokenHash +passwordResetExpiresAt +passwordResetPurpose',
+  );
   if (!user) throw AppError.notFound('User not found');
 
-  const temporaryPassword = explicitPassword ? null : generateTemporaryPassword();
-  const password = explicitPassword ?? (temporaryPassword as string);
-  user.passwordHash = await hashPassword(password);
-  user.plaintextPassword = plaintextFieldFor(password).plaintextPassword;
-  user.mustChangePassword = true;
-  user.passwordChangedAt = new Date();
-  // A reset is also the remedy for a locked-out user.
-  user.failedLoginAttempts = 0;
-  user.lockedUntil = null;
-
+  // Every reset ends current sessions, whichever way the new password is delivered:
+  // whoever knew the old one must not keep a live session.
   const now = new Date();
   for (const token of user.refreshTokens) {
     if (token.revokedAt === null) token.revokedAt = now;
   }
+  // A reset is also the remedy for a locked-out user.
+  user.failedLoginAttempts = 0;
+  user.lockedUntil = null;
+  clearPasswordResetToken(user);
 
+  if (!explicitPassword && canSendMail()) {
+    // Park the account on a hash nobody holds while the link is outstanding, so the old
+    // password stops working the moment the reset is requested.
+    user.passwordHash = await unusablePasswordHash();
+    user.mustChangePassword = true;
+    user.passwordChangedAt = new Date();
+    await user.save();
+
+    const { sent } = await issuePasswordSetupLink(user, 'invite');
+    if (sent) return { user: toUserDto(user.toObject()), temporaryPassword: null, invited: true };
+
+    const temporaryPassword = await assignTemporaryPassword(user);
+    return { user: toUserDto(user.toObject()), temporaryPassword, invited: false };
+  }
+
+  const temporaryPassword = explicitPassword ? null : generateTemporaryPassword();
+  user.passwordHash = await hashPassword(explicitPassword ?? (temporaryPassword as string));
+  user.mustChangePassword = true;
+  user.passwordChangedAt = new Date();
   await user.save();
-  return { user: toUserDto(user.toObject()), temporaryPassword };
+
+  return { user: toUserDto(user.toObject()), temporaryPassword, invited: false };
 }
 
 export async function unlockUser(userId: string): Promise<UserDto> {
@@ -155,33 +234,4 @@ async function assertAnotherActiveAdminExists(excludingUserId: string): Promise<
   if (others === 0) {
     throw AppError.badRequest('This is the last active admin — promote another admin first');
   }
-}
-
-/**
- * Returns the stored readable password, so an admin can tell a teacher what theirs is.
- *
- * Every call is audited by the route, because "who looked at whose password" is exactly
- * the question you want answerable after the fact.
- */
-export async function revealPassword(userId: string): Promise<{ password: string }> {
-  if (!isPlaintextStorageEnabled()) {
-    throw new AppError(
-      409,
-      'Readable passwords are not being stored. Set STORE_PLAINTEXT_PASSWORDS=true, or use Reset to issue a new password.',
-      'PLAINTEXT_DISABLED',
-    );
-  }
-
-  const user = await User.findById(userId).select('+plaintextPassword').lean<UserDoc>();
-  if (!user) throw AppError.notFound('User not found');
-
-  if (!user.plaintextPassword) {
-    throw new AppError(
-      409,
-      'No readable password on record for this user — it was set before this was switched on. Use Reset to issue a new one.',
-      'NO_PLAINTEXT_STORED',
-    );
-  }
-
-  return { password: user.plaintextPassword };
 }

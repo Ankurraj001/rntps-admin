@@ -9,6 +9,20 @@ import { ErrorBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input } from '@/components/ui/Field';
 import { ApiError } from '@/lib/api';
 
+/** Renders a TTL the way a person would say it, falling back while config is loading. */
+function describeValidity(minutes: number | undefined): string {
+  if (minutes === undefined) return 'a short while';
+  if (minutes % (60 * 24) === 0) {
+    const days = minutes / (60 * 24);
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? 'an hour' : `${hours} hours`;
+  }
+  return `${minutes} minutes`;
+}
+
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -20,6 +34,9 @@ export function ForgotPasswordPage() {
   // never arrives, and the user waits for it instead of asking for help.
   const config = useQuery({ queryKey: ['auth', 'config'], queryFn: authApi.config, retry: false });
   const canEmailReset = config.data?.passwordResetByEmail ?? false;
+  // Driven by the server's PASSWORD_RESET_TTL_MINUTES rather than hardcoded, so the page
+  // cannot quietly start lying when that is tuned.
+  const linkValidity = describeValidity(config.data?.passwordResetTtlMinutes);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -83,7 +100,7 @@ export function ForgotPasswordPage() {
                     otherwise would let anyone test which staff addresses exist. */}
                 <p className="text-sm text-slate-600">
                   If <strong>{email}</strong> has an account, a reset link is on its way. The link
-                  expires in an hour.
+                  expires in {linkValidity}.
                 </p>
                 <p className="text-xs text-slate-500">
                   Nothing arrived? Check the spam folder, or ask an administrator to reset it for

@@ -22,7 +22,10 @@ beforeEach(async () => {
 describe('GET /auth/config', () => {
   it('is public — the sign-in screens need it before anyone is authenticated', async () => {
     const res = await request(app).get('/api/v1/auth/config').expect(200);
-    expect(res.body).toEqual({ passwordResetByEmail: canSendMail() });
+    expect(res.body).toEqual({
+      passwordResetByEmail: canSendMail(),
+      passwordResetTtlMinutes: expect.any(Number),
+    });
   });
 
   it('reports reset-by-email as unavailable in this environment', async () => {

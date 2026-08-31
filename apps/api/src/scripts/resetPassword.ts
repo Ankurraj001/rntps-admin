@@ -3,7 +3,7 @@ import { emailSchema } from '@rntps/shared';
 import { connectDatabase, disconnectDatabase } from '../config/db.js';
 import { logger } from '../config/logger.js';
 import { generateTemporaryPassword, hashPassword } from '../lib/password.js';
-import { plaintextFieldFor } from '../lib/plaintextPassword.js';
+import { clearPasswordResetToken } from '../modules/auth/auth.service.js';
 import { User } from '../models/User.js';
 
 /**
@@ -25,17 +25,19 @@ async function main(): Promise<void> {
   await connectDatabase();
 
   const user = await User.findOne({ email: parsed.data }).select(
-    '+passwordHash +refreshTokens +plaintextPassword',
+    '+passwordHash +refreshTokens +passwordResetTokenHash +passwordResetExpiresAt +passwordResetPurpose',
   );
   if (!user) throw new Error(`No account found for ${parsed.data}`);
 
   const temporaryPassword = generateTemporaryPassword();
   user.passwordHash = await hashPassword(temporaryPassword);
-  user.plaintextPassword = plaintextFieldFor(temporaryPassword).plaintextPassword;
   user.mustChangePassword = true;
   user.passwordChangedAt = new Date();
   user.failedLoginAttempts = 0;
   user.lockedUntil = null;
+  // Any emailed link still in flight must die with the old password — otherwise whoever
+  // requested it keeps a way in after this reset.
+  clearPasswordResetToken(user);
   // Reactivate, since a deactivated admin cannot be recovered any other way.
   user.isActive = true;
 

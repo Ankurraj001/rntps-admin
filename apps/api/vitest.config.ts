@@ -12,6 +12,14 @@ export default defineConfig({
       JWT_SECRET: 'test-only-secret-that-is-long-enough-to-pass-validation',
       MAX_FAILED_LOGINS: '5',
       ACCOUNT_LOCK_MINUTES: '15',
+      // Blanked explicitly, not merely left unset: env.ts calls dotenv/config, which fills
+      // anything absent here from the developer's own apps/api/.env. Without these, adding a
+      // real RESEND_API_KEY locally flips isMailConfigured and breaks every test that asserts
+      // the no-mail path — a suite that passes or fails depending on who is running it.
+      RESEND_API_KEY: '',
+      SMTP_HOST: '',
+      SMTP_USER: '',
+      SMTP_PASS: '',
     },
     globals: true,
     globalSetup: ['./src/test/globalSetup.ts'],

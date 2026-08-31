@@ -25,7 +25,8 @@
     "seed:admin": "npm run seed:admin -w @rntps/api --",
     "reset:password": "npm run reset:password -w @rntps/api --",
     "test:e2e": "npm run test:e2e -w @rntps/web",
-    "mail:test": "npm run mail:test -w @rntps/api --"
+    "mail:test": "npm run mail:test -w @rntps/api --",
+    "migrate:drop-plaintext": "npm run migrate:drop-plaintext -w @rntps/api --"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

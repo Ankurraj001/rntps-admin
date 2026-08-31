@@ -88,10 +88,12 @@ counters are never reset.
 | `npm run seed:settings` | Creates the settings singleton |
 | `npm run seed:admin -- "Name" email@school` | Creates an admin and prints a one-time password |
 | `npm run reset:password -- email@school` | Break-glass password reset when nobody can sign in |
-| `npm run mail:test -- you@example.com` | Verifies SMTP settings before anyone relies on them |
+| `npm run mail:test -- you@example.com` | Verifies the mail transport before anyone relies on it |
 | `npm run test:e2e` | Playwright end-to-end tests against a running stack |
 | `npm run indexes:sync` | Builds the schema indexes — **required deploy step**, see below |
 | `npm run migrate:rupees --workspace @rntps/api` | One-off paise → rupees conversion; `--dry-run` reports without writing |
+| `npm run migrate:drop-plaintext` | One-off: unsets the old readable-password field; `--dry-run`, `--force-rotation` |
+| `npm run tokens:clear-expired --workspace @rntps/api` | Housekeeping: clears expired reset tokens; `--dry-run` |
 
 
 ## Testing
@@ -230,44 +232,65 @@ attendance for their assigned classes only. `requireClassAccess` reads the class
 contact details are admin-only. The frontend hides what a teacher cannot do, but the API enforces it
 independently — the UI guard is convenience, not security.
 
-**Forgotten password.** `POST /auth/forgot-password` emails a single-use link that expires in an
-hour. The token is 256 bits of randomness stored only as a SHA-256 hash, so a database leak yields
-nothing replayable. The endpoint always answers `204` — telling the caller "no such account" would
-turn it into a staff-directory oracle — and is rate limited to 5 requests per 15 minutes per IP, since
-it both sends mail and could otherwise be used to probe addresses. Completing a reset consumes the
-token, clears any lockout and revokes every existing session.
+**Passwords arrive by email, never by hand.** Creating a user emails them a single-use link to
+choose their own password; an admin reset does the same. The account is parked on a hash of random
+bytes nobody holds until the link is used, so the old password stops working the moment a reset is
+requested. Both operations return no password in the response body — there is nothing for an admin to
+read out, overhear or screenshot.
 
-**With no SMTP configured, self-service reset is switched off rather than faked.** This matters: the
-page used to accept an address, mint a token and say "check your email" on a server that could not
-send one, leaving the user waiting for a message that never came. Now:
+**Forgotten password.** `POST /auth/forgot-password` emails a single-use link. The token is 256 bits
+of randomness stored only as a SHA-256 hash, so a database leak yields nothing replayable. Reset
+links last `PASSWORD_RESET_TTL_MINUTES` (default 60); invitations last `INVITE_TTL_HOURS` (default 72),
+since they are often handed out before term starts. Completing either consumes the token, clears any
+lockout, revokes every existing session, and records the address as confirmed.
 
-- `GET /auth/config` (public) reports `passwordResetByEmail`. It reveals only whether the server can
-  send mail at all — never whether an account exists — so it gives an attacker nothing.
+The endpoint always answers `204` — telling the caller "no such account" would turn it into a
+staff-directory oracle. Four things sit behind it:
+
+- **Two rate limits, not one.** 5 requests per 15 minutes per IP on `/forgot-password`, and a separate
+  budget on `/reset-password`. They used to share a single limiter, which meant a user who asked for
+  two links could be refused the chance to actually set a password.
+- **A per-account throttle, in the database.** Three links an hour per account. The IP limit is
+  best-effort on serverless — each warm container counts separately — so an attacker rotating addresses
+  could otherwise flood one inbox. This counter is shared by every container, like the account lockout.
+- **The token is withdrawn if the email fails.** A send that reports failure clears the hash again.
+  Leaving a live credential-reset path in the database for a message nobody received is worse than not
+  having tried.
+- **Changing a password kills any link in flight.** A self-service change, an admin reset and the
+  break-glass script all clear the pending token. Without that, whoever requested a reset kept a
+  working link for the rest of its lifetime *after* the victim secured the account.
+
+**With no mail transport configured, self-service reset is switched off rather than faked.** This
+matters: the page used to accept an address, mint a token and say "check your email" on a server that
+could not send one, leaving the user waiting for a message that never came. Now:
+
+- `GET /auth/config` (public) reports `passwordResetByEmail` and the real link lifetime. It reflects
+  whether mail can actually be *delivered* — the transport is asked, and the answer cached for five
+  minutes per container — not merely whether credentials are set, so a revoked API key does not leave
+  the page promising email. It reveals only whether the server can send at all, never whether an
+  account exists.
 - The forgotten-password page asks first. With email unavailable it shows the recovery path that
-  actually works — **ask an administrator**, who can set a new password from Settings → Users — instead
-  of a form that leads nowhere.
-- `POST /auth/forgot-password` mints no token in that state. Storing a reset hash nobody can receive
-  leaves a live credential-reset path in the database for no benefit.
+  actually works — **ask an administrator** — instead of a form that leads nowhere.
+- `POST /auth/forgot-password` mints no token in that state.
+- Account creation falls back to a one-time password shown to the admin once, so onboarding never
+  hard-blocks on mail.
 
 In development with no credentials the link is still written to the server log, which is what a
-developer needs. `npm run migrate:rupees --workspace @rntps/api` clears any expired reset tokens left
-behind by the old behaviour.
+developer needs. `npm run tokens:clear-expired --workspace @rntps/api` clears expired reset tokens;
+it is housekeeping, not a security control, since expiry is enforced in code. Deliberately a script
+and **not** a TTL index — Mongo TTL deletes the whole document, which on `users` would delete the user.
 
-**Readable passwords (`STORE_PLAINTEXT_PASSWORDS`).** Off by default. When on, a readable copy of
-each password is kept alongside the hash so an admin can look one up and tell a teacher what theirs
-is, via **Users → Password**. Authentication always verifies against the hash — the readable copy is
-only ever read, never checked — so switching the flag off breaks nothing, and copies clear as
-passwords change.
+**Every credential event is audited.** `auth.password-reset-requested` (recorded even for unknown
+addresses, which is how enumeration shows up after the fact), `auth.password-reset-completed`,
+`auth.password-changed`, `auth.login-blocked`, and `user.invited`. Secrets are scrubbed before the row
+is written.
 
-Reads go through a dedicated admin-only endpoint rather than the users list, and each one writes a
-`user.password-viewed` audit entry recording who read whose password. The password itself is scrubbed
-from that entry.
-
-The cost, stated plainly: with this on, anyone who obtains the database — or just the connection
-string, which Netlify's non-static function IPs mean is reachable from anywhere — has every staff
-password in usable form, and staff reuse passwords elsewhere. **Users → Reset** issues a fresh
-password in one click and needs none of this, so leave the flag off unless reading old passwords back
-is genuinely required.
+**No password is ever readable.** Only the scrypt hash is stored. There is no field, endpoint or
+screen that can return a user's password, and nobody — including an admin — can look one up. An
+earlier `STORE_PLAINTEXT_PASSWORDS` flag kept a readable copy alongside the hash; it and its
+`GET /users/:id/password` endpoint have been removed, because anyone who obtained the database — or
+just the connection string, reachable from anywhere given Netlify's non-static function IPs — would
+have held every staff password in usable form. Recovery is a fresh emailed link, not a lookup.
 
 **First sign-in.** `npm run seed:admin` prints a one-time password. Any user with a temporary password
 is authenticated but confined to `/auth/me`, `/auth/change-password` and `/auth/logout` until they set
@@ -351,10 +374,11 @@ A/T   GET    /auth/me
 A/T   POST   /auth/change-password                revokes every session
 
 A     GET    /users
-A     POST   /users                               returns a one-time temporary password
+A     POST   /users                               emails a setup link; password only if mail is down
 A     PATCH  /users/:userId
 A     POST   /users/:userId/deactivate | /activate
-A     POST   /users/:userId/reset-password | /unlock
+A     POST   /users/:userId/reset-password         emails a setup link; password only if mail is down
+A     POST   /users/:userId/unlock
 
 A/T   GET    /students                            list, search, filter, paginate
 A     POST   /students                            onboard (auto-generates the studentId)
@@ -548,46 +572,86 @@ mongodump --uri "$MONGODB_URI" --out ./backup-$(date +%F)
 
 ### Email (for password resets)
 
-Optional, and **currently unset** — so the app tells users to ask an administrator instead of offering
-a reset link. Configure it and self-service reset turns itself on; no code change.
+Required for self-service password reset and for emailed account setup. Without it the app tells users
+to ask an administrator, and account creation falls back to a one-time password.
 
-**Gmail** works and is free. Enable 2-Step Verification on the account, create an App Password at
-<https://myaccount.google.com/apppasswords> (your normal password will not work — Google removed
-plain-password SMTP access in 2022), then set:
+**Resend** is the transport. It needs a domain you control DNS for — its shared sender
+(`onboarding@resend.dev`) delivers only to the address your Resend account was registered with and
+answers `403` for anyone else, so it is for testing, not for mailing staff.
+
+1. Add your domain at <https://resend.com/domains>, choosing a **sending subdomain** such as
+   `send.yourschool.in` rather than the root. Resend recommends this, and it leaves any existing mail
+   on the root domain alone.
+2. Add the DNS records it shows you — an `MX` for bounce handling, a TXT SPF record, and a DKIM TXT
+   record. Propagation can take up to 24 hours.
+3. Create a key at <https://resend.com/api-keys>, then set:
 
 ```
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
+MAIL_FROM="R.N. TPS Admin <noreply@yourschool.in>"
 APP_BASE_URL=https://rntps-admin.netlify.app
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=yourschool@gmail.com
-SMTP_PASS=the-16-character-app-password
-MAIL_FROM="RNTPS Admin <yourschool@gmail.com>"
 ```
 
-Verify with `npm run mail:test -- you@example.com` before relying on it.
+The app refuses to boot in production if `MAIL_FROM` is still a `resend.dev` address, or if
+`APP_BASE_URL` is localhost — both are silent failures otherwise, surfacing as a `403` or an
+unreachable link on the first real reset. **`APP_BASE_URL` is not set by `netlify.toml`**; set it in
+the Netlify UI.
 
-What to expect from Gmail at this scale:
+Verify with `npm run mail:test -- you@example.com` before relying on it, and check the message reaches
+`delivered` in the Resend dashboard — not merely that the script reported success.
 
-- **Volume is fine.** A consumer Gmail account allows roughly 500 recipients a day; a school resetting
-  a handful of staff passwords will never approach it.
-- **The From address cannot be faked.** Gmail rewrites it to the account's own address, so mail comes
-  from `yourschool@gmail.com` rather than `noreply@yourschool.in`.
-- **Deliverability is the weak point.** Mail from a consumer account containing a link can land in
-  spam, and Google occasionally blocks programmatic sends originating from a data-centre IP such as a
-  Netlify function. If resets start silently failing, this is why.
+What to expect on the free tier: 3,000 emails a month, but **100 a day**, which is the limit that
+actually bites. Inviting a large staff in one sitting can hit it; invite in batches, or use the
+temporary-password fallback. Logs are kept 30 days, which is what makes "did it actually send?"
+answerable.
 
-`SMTP_*` is generic, so switching provider is only an env change — **Brevo** (300/day free, no custom
-domain needed) or **Resend** (3,000/month free, needs DNS records) both have materially better
-deliverability if Gmail proves flaky.
+**Resend's shared sender is not a shortcut.** Without a verified domain, `MAIL_FROM` falls back to
+`onboarding@resend.dev`, and Resend then answers `403` for every recipient except the exact address
+the Resend account was registered with — a plus-address of that same mailbox is refused too. It is a
+sender restriction, not a rate limit, so a small staff list does not avoid it. `GET /auth/config`
+therefore reports reset-by-email as unavailable in that state, and the forgotten-password page keeps
+pointing at an administrator, which is the truth.
+
+**No domain? Use Brevo.** `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` are used whenever `RESEND_API_KEY` is
+unset. Brevo's free tier verifies a single sender *address* — it emails that address a confirmation
+link — so there is no DNS and no domain purchase, at 300/day:
+
+```
+SMTP_HOST=smtp-relay.brevo.com
+SMTP_PORT=587
+SMTP_USER=xxxxxx@smtp-brevo.com  # the "Login" under SMTP & API -> SMTP, NOT your account email
+SMTP_PASS=xsmtpsib-...           # the SMTP key from the same page, not your password
+MAIL_FROM="R.N. TPS Admin <you@gmail.com>"   # must be the verified sender
+```
+
+Two credentials people get wrong here, both surfacing as `535 5.7.8 Authentication failed`:
+`SMTP_USER` is the `xxxxxx@smtp-brevo.com` login Brevo generates, **not** the account email and not
+the relay host; `SMTP_PASS` is the SMTP key (`xsmtpsib-…`), not the account password and not an API
+key (`xkeysib-…`). `MAIL_FROM` is a third, separate thing: the sender address verified in Brevo.
+
+The trade-off, stated plainly: mail leaves Brevo's IPs with a `gmail.com` From, so SPF and DKIM cannot
+align with the From domain and DMARC alignment fails. `gmail.com` publishes `p=none` so mail generally
+still arrives, and 10–15 staff resetting occasionally is nowhere near "bulk sender" territory — but
+spam-folder risk is materially higher than with a verified domain, and a reset link in spam is a
+locked-out user. Verify a domain when the school has one.
+
+Only port 25 is blocked from a Netlify function; 465 and 587 are open, so SMTP is a real option there.
+Gmail's own SMTP is the weakest choice: consumer-account mail containing a link often lands in spam,
+and Google sometimes blocks programmatic sends from a data-centre IP.
 
 ### Recovering access
 
-- A locked-out user: an admin clears it from **Users → Unlock**, or the user resets their own password.
-- A forgotten password: the user clicks **Forgotten your password?** on the sign-in screen. Failing
-  that, an admin uses **Users → Reset**.
+- **A locked-out user:** an admin clears it from **Users → Unlock**, or the user resets their own
+  password.
+- **A forgotten password:** the user clicks **Forgotten your password?** on the sign-in screen and gets
+  a link by email. Failing that, an admin uses **Users → Reset**, which emails the user a setup link —
+  or, if mail is unavailable, shows a one-time password to hand over.
+- **An address nobody can receive mail at:** **Users** flags any account whose address has never been
+  confirmed by a completed link, which is usually a typo. Fix it with **Users → Edit**, then reset.
 - **Nobody can sign in at all:** `npm run reset:password -- someone@school.example` from a shell with
-  `MONGODB_URI` set. This reactivates the account, clears any lock and prints a one-time password.
-  It is the only path that does not require an existing session, which is why it needs shell access.
+  `MONGODB_URI` set. This reactivates the account, clears any lock, revokes every session and prints a
+  one-time password. It is the only path that does not require an existing session or working email,
+  which is why it needs shell access.
 
 ### After a schema change
 

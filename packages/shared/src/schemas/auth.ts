@@ -5,13 +5,25 @@ import { optionalText, phoneInputSchema } from './common.js';
 /**
  * Minimum length is the primary strength lever for a school with a handful of staff
  * accounts; a composition rule ("one symbol") mostly produces Password1! in practice.
- * NIST 800-63B recommends length over composition.
+ * NIST 800-63B recommends length over composition, and sets 8 as its floor for a
+ * user-chosen secret.
+ *
+ * Exported so the API and the two password forms cannot drift apart — the forms used to
+ * carry their own copy of the number, which is three places to miss when it changes.
  */
+export const PASSWORD_MIN_LENGTH = 8;
+
 export const passwordSchema = z
   .string()
-  .min(12, 'Use at least 12 characters')
+  .min(PASSWORD_MIN_LENGTH, `Use at least ${PASSWORD_MIN_LENGTH} characters`)
   .max(200, 'Password is too long')
-  .refine((value) => value.trim().length >= 12, 'Password cannot be mostly spaces');
+  // Length after trimming, so the minimum cannot be met with spaces. Skipped when the raw
+  // value is already too short: .min() has reported that, and adding "mostly spaces" to a
+  // password containing none reads like a second, wrong complaint.
+  .refine(
+    (value) => value.length < PASSWORD_MIN_LENGTH || value.trim().length >= PASSWORD_MIN_LENGTH,
+    'Password cannot be mostly spaces',
+  );
 
 export const emailSchema = z
   .string()
@@ -92,6 +104,12 @@ export interface UserDto {
   mustChangePassword: boolean;
   lastLoginAt: string | null;
   isLocked: boolean;
+  /**
+   * When the holder last proved they control the address, by completing an emailed link.
+   * Null means nobody ever has — most often because an admin mistyped it, which is
+   * otherwise invisible until someone reports never receiving mail.
+   */
+  emailVerifiedAt: string | null;
   createdAt: string;
 }
 
@@ -122,6 +140,8 @@ export function canAccessClass(user: Pick<UserDto, 'role' | 'assignedClasses'>, 
  * and the user waits for it.
  */
 export interface AuthConfigDto {
-  /** False when SMTP is not configured, so a reset link cannot be delivered. */
+  /** False when no mail transport is configured or reachable, so no link can be delivered. */
   passwordResetByEmail: boolean;
+  /** How long a reset link lasts, so the page states the real figure rather than a guess. */
+  passwordResetTtlMinutes: number;
 }

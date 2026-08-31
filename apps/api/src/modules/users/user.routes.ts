@@ -26,10 +26,10 @@ userRoutes.post(
     const result = await service.createUser(payload, currentUser(req).id);
 
     await recordAudit(req, {
-      action: 'user.create',
+      action: result.invited ? 'user.invited' : 'user.create',
       entity: 'user',
       entityId: result.user.id,
-      after: result.user,
+      after: { ...result.user, invited: result.invited },
     });
 
     res.status(201).json(result);
@@ -80,20 +80,12 @@ userRoutes.post(
     const result = await service.resetPassword(userId, newPassword);
 
     // The temporary password itself is scrubbed by recordAudit.
-    await recordAudit(req, { action: 'user.reset-password', entity: 'user', entityId: userId });
-    res.json(result);
-  }),
-);
-
-userRoutes.get(
-  '/:userId/password',
-  asyncHandler(async (req, res) => {
-    const userId = String(req.params.userId);
-    const result = await service.revealPassword(userId);
-
-    // Audited deliberately: the password itself is scrubbed by recordAudit, but the fact
-    // that this admin read this user's password is worth keeping.
-    await recordAudit(req, { action: 'user.password-viewed', entity: 'user', entityId: userId });
+    await recordAudit(req, {
+      action: 'user.reset-password',
+      entity: 'user',
+      entityId: userId,
+      after: { invited: result.invited },
+    });
     res.json(result);
   }),
 );

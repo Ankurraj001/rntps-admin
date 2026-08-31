@@ -1,3 +1,4 @@
+import { PASSWORD_MIN_LENGTH } from '@rntps/shared';
 import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { authApi } from '@/api/auth';
@@ -7,8 +8,6 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input } from '@/components/ui/Field';
 import { ApiError } from '@/lib/api';
-
-const MIN_LENGTH = 12;
 
 export function ChangePasswordPage() {
   const { user, signOut } = useAuth();
@@ -23,7 +22,7 @@ export function ChangePasswordPage() {
   if (!user) return <Navigate to="/login" replace />;
 
   const mismatch = confirmPassword.length > 0 && confirmPassword !== newPassword;
-  const tooShort = newPassword.length > 0 && newPassword.length < MIN_LENGTH;
+  const tooShort = newPassword.length > 0 && newPassword.length < PASSWORD_MIN_LENGTH;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -76,8 +75,8 @@ export function ChangePasswordPage() {
                 label="New password"
                 htmlFor="next"
                 required
-                error={tooShort ? `Use at least ${MIN_LENGTH} characters` : undefined}
-                hint={`At least ${MIN_LENGTH} characters. A short phrase you can remember beats a short jumble.`}
+                error={tooShort ? `Use at least ${PASSWORD_MIN_LENGTH} characters` : undefined}
+                hint={`At least ${PASSWORD_MIN_LENGTH} characters. A short phrase you can remember beats a short jumble.`}
               >
                 <Input
                   id="next"

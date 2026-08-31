@@ -7,9 +7,12 @@ import type {
 } from '@rntps/shared';
 import { api } from '@/lib/api';
 
-export interface TemporaryPasswordResult {
+export interface UserHandoverResult {
   user: UserDto;
+  /** Only set on the fallback path, where no setup link could be emailed. */
   temporaryPassword: string | null;
+  /** True when the user was emailed a link to choose their own password. */
+  invited: boolean;
 }
 
 export const authApi = {
@@ -28,15 +31,13 @@ export const authApi = {
 
 export const usersApi = {
   list: () => api.get<{ items: UserDto[] }>('/users'),
-  create: (payload: CreateUserInput) => api.post<TemporaryPasswordResult>('/users', payload),
+  create: (payload: CreateUserInput) => api.post<UserHandoverResult>('/users', payload),
   update: (id: string, payload: UpdateUserPayload) => api.patch<UserDto>(`/users/${id}`, payload),
   deactivate: (id: string) => api.post<UserDto>(`/users/${id}/deactivate`),
   activate: (id: string) => api.post<UserDto>(`/users/${id}/activate`),
   unlock: (id: string) => api.post<UserDto>(`/users/${id}/unlock`),
   resetPassword: (id: string) =>
-    api.post<TemporaryPasswordResult>(`/users/${id}/reset-password`, {}),
-  /** Only works when the server is storing readable passwords; every call is audited. */
-  revealPassword: (id: string) => api.get<{ password: string }>(`/users/${id}/password`),
+    api.post<UserHandoverResult>(`/users/${id}/reset-password`, {}),
 };
 
 export const userKeys = { all: ['users'] as const };

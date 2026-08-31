@@ -12,7 +12,7 @@ let sendMail: ReturnType<typeof vi.spyOn>;
 /** Pulls the token out of the emailed link, the way a user clicking it would. */
 function tokenFromLastEmail(): string {
   const body = String(sendMail.mock.calls.at(-1)?.[0]?.text ?? '');
-  const match = /reset-password\?token=([^\s]+)/.exec(body);
+  const match = /reset-password\?token=([^\s&]+)/.exec(body);
   if (!match) throw new Error(`No reset link in email body: ${body}`);
   return decodeURIComponent(match[1] as string);
 }

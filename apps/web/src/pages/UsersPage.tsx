@@ -1,8 +1,8 @@
 import { CLASS_CODES, USER_ROLES, classLabel, type UserDto, type CreateUserInput } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Eye, KeyRound, LockOpen, Plus, UserX } from 'lucide-react';
+import { Copy, KeyRound, LockOpen, Plus, UserX } from 'lucide-react';
 import { useState } from 'react';
-import { userKeys, usersApi } from '@/api/auth';
+import { userKeys, usersApi, type UserHandoverResult } from '@/api/auth';
 import { useCurrentUser } from '@/auth/AuthProvider';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
@@ -15,7 +15,7 @@ export function UsersPage() {
   const me = useCurrentUser();
   const queryClient = useQueryClient();
   const [isAdding, setIsAdding] = useState(false);
-  const [handover, setHandover] = useState<{ email: string; password: string } | null>(null);
+  const [handover, setHandover] = useState<Handover | null>(null);
 
   const users = useQuery({ queryKey: userKeys.all, queryFn: usersApi.list });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: userKeys.all });
@@ -26,9 +26,7 @@ export function UsersPage() {
   const reset = useMutation({
     mutationFn: usersApi.resetPassword,
     onSuccess: async (result) => {
-      if (result.temporaryPassword) {
-        setHandover({ email: result.user.email, password: result.temporaryPassword });
-      }
+      setHandover(handoverFrom(result));
       await invalidate();
     },
   });
@@ -51,13 +49,7 @@ export function UsersPage() {
       <div className="space-y-5 p-6">
         {mutationError && <ErrorBlock message={(mutationError as Error).message} />}
 
-        {handover && (
-          <TemporaryPasswordCard
-            email={handover.email}
-            password={handover.password}
-            onDismiss={() => setHandover(null)}
-          />
-        )}
+        {handover && <HandoverCard handover={handover} onDismiss={() => setHandover(null)} />}
 
         {isAdding && (
           <AddUserForm
@@ -125,18 +117,6 @@ function UserRow({
   onUnlock: () => void;
   onToggleActive: () => void;
 }) {
-  const [revealed, setRevealed] = useState<string | null>(null);
-  const [revealError, setRevealError] = useState<string | null>(null);
-
-  const reveal = useMutation({
-    mutationFn: () => usersApi.revealPassword(user.id),
-    onSuccess: (result) => {
-      setRevealError(null);
-      setRevealed(result.password);
-    },
-    onError: (error) => setRevealError((error as Error).message),
-  });
-
   return (
     <tr className="hover:bg-slate-50">
       <td className="px-5 py-3">
@@ -162,28 +142,13 @@ function UserRow({
           <StatusBadge status={user.isActive ? 'ACTIVE' : 'INACTIVE'} />
           {user.isLocked && <Badge tone="red">Locked</Badge>}
           {user.mustChangePassword && <Badge tone="amber">Temp password</Badge>}
+          {/* A mistyped address is otherwise invisible until someone reports never getting
+              mail — and it is the address every recovery link is sent to. */}
+          {!user.emailVerifiedAt && <Badge tone="slate">Email unconfirmed</Badge>}
         </div>
       </td>
       <td className="px-5 py-3">
-        {revealed && (
-          <p className="mb-1 text-right">
-            <code className="rounded border border-slate-300 bg-slate-50 px-2 py-1 font-mono text-xs">
-              {revealed}
-            </code>
-          </p>
-        )}
-        {revealError && <p className="mb-1 text-right text-xs text-amber-700">{revealError}</p>}
-
         <div className="flex justify-end gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || reveal.isPending}
-            onClick={() => (revealed ? setRevealed(null) : reveal.mutate())}
-          >
-            {reveal.isPending ? <Spinner /> : <Eye className="h-4 w-4" aria-hidden />}
-            {revealed ? 'Hide' : 'Password'}
-          </Button>
           {user.isLocked && (
             <Button variant="ghost" size="sm" disabled={busy} onClick={onUnlock}>
               <LockOpen className="h-4 w-4" aria-hidden />
@@ -219,34 +184,68 @@ function UserRow({
   );
 }
 
-/** Shown once — the server never returns a password again after this. */
-function TemporaryPasswordCard({
-  email,
-  password,
-  onDismiss,
-}: {
-  email: string;
-  password: string;
-  onDismiss: () => void;
-}) {
+/**
+ * What happened when an account was created or reset, and what the admin must do next.
+ *
+ * Two outcomes, because either the user was emailed a link — in which case there is no
+ * password for anyone to handle — or mail was unavailable and a one-time password has to be
+ * passed on by hand.
+ */
+export type Handover =
+  | { kind: 'invited'; email: string }
+  | { kind: 'password'; email: string; password: string };
+
+export function handoverFrom(result: UserHandoverResult): Handover | null {
+  if (result.invited) return { kind: 'invited', email: result.user.email };
+  if (result.temporaryPassword) {
+    return { kind: 'password', email: result.user.email, password: result.temporaryPassword };
+  }
+  return null;
+}
+
+function HandoverCard({ handover, onDismiss }: { handover: Handover; onDismiss: () => void }) {
   const [copied, setCopied] = useState(false);
+
+  if (handover.kind === 'invited') {
+    return (
+      <Card className="border-emerald-300 bg-emerald-50">
+        <CardBody className="space-y-3">
+          <div>
+            <p className="text-sm font-medium text-slate-900">
+              Setup link emailed to {handover.email}
+            </p>
+            <p className="text-xs text-slate-600">
+              They choose their own password from the link, so nobody else ever sees it. Ask them to
+              check their spam folder if it has not arrived in a few minutes.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onDismiss}>
+            Done
+          </Button>
+        </CardBody>
+      </Card>
+    );
+  }
 
   return (
     <Card className="border-amber-300 bg-amber-50">
       <CardBody className="space-y-3">
         <div>
-          <p className="text-sm font-medium text-slate-900">Temporary password for {email}</p>
+          <p className="text-sm font-medium text-slate-900">
+            Temporary password for {handover.email}
+          </p>
           <p className="text-xs text-slate-600">
-            Shown once. Hand it over directly — they will be asked to change it at first sign-in.
+            Email could not be sent, so hand this over directly. Shown once — the server never
+            returns it again — and they will be asked to change it at first sign-in.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <code className="rounded border border-amber-300 bg-white px-3 py-2 font-mono text-sm">{password}</code>
+          <code className="rounded border border-amber-300 bg-white px-3 py-2 font-mono text-sm">{handover.password}</code>
           <Button
             variant="secondary"
             size="sm"
             onClick={() => {
-              void navigator.clipboard.writeText(password).then(() => setCopied(true));
+              void navigator.clipboard.writeText(handover.password).then(() => setCopied(true));
             }}
           >
             <Copy className="h-4 w-4" aria-hidden />
@@ -261,11 +260,7 @@ function TemporaryPasswordCard({
   );
 }
 
-function AddUserForm({
-  onDone,
-}: {
-  onDone: (result: { email: string; password: string } | null) => void;
-}) {
+function AddUserForm({ onDone }: { onDone: (result: Handover | null) => void }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'ADMIN' | 'TEACHER'>('TEACHER');
@@ -280,9 +275,7 @@ function AddUserForm({
         assignedClasses: role === 'ADMIN' ? [] : classes,
       } as CreateUserInput),
     onSuccess: (result) => {
-      onDone(
-        result.temporaryPassword ? { email: result.user.email, password: result.temporaryPassword } : null,
-      );
+      onDone(handoverFrom(result));
     },
   });
 
@@ -294,7 +287,10 @@ function AddUserForm({
 
   return (
     <Card>
-      <CardHeader title="Add user" description="A temporary password is generated for you to hand over." />
+      <CardHeader
+        title="Add user"
+        description="They are emailed a link to set their own password. If email is unavailable, a one-time password is shown instead."
+      />
       <CardBody className="space-y-4">
         {create.error && <ErrorBlock message={(create.error as Error).message} />}
 

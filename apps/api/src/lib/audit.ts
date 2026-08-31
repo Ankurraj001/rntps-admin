@@ -14,9 +14,12 @@ export interface AuditEntry {
 const REDACTED_FIELDS = new Set([
   'passwordHash',
   'password',
-  'plaintextPassword',
+  'newPassword',
+  'currentPassword',
   'refreshTokens',
   'temporaryPassword',
+  'passwordResetTokenHash',
+  'passwordResetExpiresAt',
 ]);
 
 /** Strips secrets before they reach a long-lived audit record. */
