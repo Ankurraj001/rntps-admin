@@ -16,6 +16,7 @@ import { feeKeys, feesApi } from '@/api/fees';
 import { studentKeys, studentsApi } from '@/api/students';
 import { PageHeader } from '@/components/layout/AppShell';
 import { RecordPaymentCard } from '@/components/fees/RecordPaymentCard';
+import { WhatsAppInvoiceButton } from '@/components/fees/WhatsAppInvoiceButton';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
@@ -924,6 +925,7 @@ function InvoiceRow({
       >
         <Printer className="h-4 w-4" aria-hidden />
       </Link>
+      <WhatsAppInvoiceButton invoiceId={invoice.id} iconOnly />
     </div>
   );
 }

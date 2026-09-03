@@ -333,3 +333,47 @@ describe('resumable queue', () => {
     expect(res.body.items[0]).not.toHaveProperty('items');
   });
 });
+
+describe('GET /notifications/invoices/:invoiceId/whatsapp-link', () => {
+  it('builds a wa.me link for one invoice, addressed to the reachable guardian', async () => {
+    await billClass('5');
+    const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    const invoiceId = `${student.studentId}:${PERIOD}`;
+
+    const res = await as.get(`/api/v1/notifications/invoices/${invoiceId}/whatsapp-link`).expect(200);
+
+    expect(res.body.guardianPhone).toBe('919876543210');
+    expect(res.body.waLink).toMatch(/^https:\/\/wa\.me\/919876543210\?text=/);
+    expect(decodeURIComponent(res.body.waLink.split('text=')[1])).toContain('Aarav Sharma');
+  });
+
+  it('rolls other outstanding invoices into "Previous dues"', async () => {
+    await billClass('5');
+    const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-08' }).expect(200);
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-09' }).expect(200);
+    const septInvoiceId = `${student.studentId}:2026-09`;
+
+    const res = await as.get(`/api/v1/notifications/invoices/${septInvoiceId}/whatsapp-link`).expect(200);
+
+    const message = decodeURIComponent(res.body.waLink.split('text=')[1]);
+    expect(message).toContain('Previous dues');
+    expect(message).toContain('1,200'); // August's own bill, unpaid, rolled forward
+  });
+
+  it('404s an unknown invoice', async () => {
+    await as.get('/api/v1/notifications/invoices/NOPE:2026-08/whatsapp-link').expect(404);
+  });
+
+  it('400s when every guardian has opted out of WhatsApp', async () => {
+    await billClass('5');
+    const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await Student.updateOne({ _id: student.studentId }, { $set: { 'guardians.0.whatsappOptOut': true } });
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    const invoiceId = `${student.studentId}:${PERIOD}`;
+
+    const res = await as.get(`/api/v1/notifications/invoices/${invoiceId}/whatsapp-link`).expect(400);
+    expect(res.body.error.message).toMatch(/opted out/i);
+  });
+});

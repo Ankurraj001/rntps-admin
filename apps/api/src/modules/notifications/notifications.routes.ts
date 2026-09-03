@@ -43,6 +43,15 @@ notificationRoutes.get(
   }),
 );
 
+// One invoice's bill, addressed to whichever guardian is reachable — as opposed to
+// POST /, which builds a message per guardian across a whole filtered batch.
+notificationRoutes.get(
+  '/invoices/:invoiceId/whatsapp-link',
+  asyncHandler(async (req, res) => {
+    res.json(await service.buildInvoiceWaLink(String(req.params.invoiceId)));
+  }),
+);
+
 notificationRoutes.patch(
   '/:batchId/items/:itemKey',
   validate(updateItemStatusSchema),

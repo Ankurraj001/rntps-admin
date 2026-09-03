@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
 import { RecordPaymentCard } from '@/components/fees/RecordPaymentCard';
+import { WhatsAppInvoiceButton } from '@/components/fees/WhatsAppInvoiceButton';
 import { formatDate } from '@/lib/utils';
 import { InvoiceStatusBadge } from './InvoicesPage';
 
@@ -76,6 +77,7 @@ export function InvoiceDetailPage() {
                 Fee slip
               </Button>
             </Link>
+            <WhatsAppInvoiceButton invoiceId={data.id} />
           </div>
         }
       />

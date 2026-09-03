@@ -7,7 +7,7 @@ import { feeKeys, feesApi } from '@/api/fees';
 import { settingsApi, settingsKeys } from '@/api/settings';
 import { Button } from '@/components/ui/Button';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatDateTime } from '@/lib/utils';
 
 /**
  * The bill handed to a parent, as distinct from the receipt that proves they paid.
@@ -91,6 +91,9 @@ export function FeeSlipPage() {
 
           <dt className="text-slate-600">Due date</dt>
           <dd className="text-right">{formatDate(invoice.dueDate)}</dd>
+
+          <dt className="text-slate-600">Bill generated</dt>
+          <dd className="text-right">{formatDateTime(invoice.createdAt)}</dd>
         </dl>
 
         <table className="mt-6 w-full border-collapse text-sm">

@@ -11,6 +11,7 @@ import {
   type CreateBatchPayload,
   type FeeMessageChild,
   type FeeSlipMode,
+  type InvoiceWaLinkDto,
   type NotificationBatchDto,
   type NotificationItemStatus,
 } from '@rntps/shared';
@@ -291,6 +292,81 @@ export async function createBatch(
   });
 
   return toDto(created.toObject());
+}
+
+/**
+ * Builds a wa.me link for one specific invoice — the same message a bulk fee-demand run
+ * would produce for this student, but for exactly the bill being looked at rather than
+ * whatever period a filter happens to match.
+ */
+export async function buildInvoiceWaLink(invoiceId: string): Promise<InvoiceWaLinkDto> {
+  const invoice = await Invoice.findById(invoiceId).lean<InvoiceDoc>();
+  if (!invoice) throw AppError.notFound(`No invoice found with ID ${invoiceId}`);
+
+  const student = await Student.findById(invoice.studentId)
+    .select('guardians')
+    .lean<Pick<StudentDoc, 'guardians'>>();
+  if (!student) throw AppError.notFound(`No student found with ID ${invoice.studentId}`);
+
+  const guardian =
+    student.guardians.find((g) => g.isPrimary && !g.whatsappOptOut) ??
+    student.guardians.find((g) => !g.whatsappOptOut);
+  if (!guardian) {
+    throw AppError.badRequest(
+      student.guardians.length === 0
+        ? 'No guardian on record for this student'
+        : 'Every guardian on record has opted out of WhatsApp',
+    );
+  }
+
+  // Everything still owed on this student's other invoices, rolled into one row — the
+  // same "Previous dues" convention createBatch and the printed fee slip both follow, so a
+  // single bill sent this way still tells the whole story rather than just this month.
+  const others = await Invoice.find({
+    studentId: invoice.studentId,
+    _id: { $ne: invoice._id },
+    status: { $in: ['DUE', 'PARTIAL'] },
+  })
+    .select('totalRupees paidRupees')
+    .lean<Pick<InvoiceDoc, 'totalRupees' | 'paidRupees'>[]>();
+  const previousDuesRupees = others.reduce((sum, i) => sum + (i.totalRupees - i.paidRupees), 0);
+
+  // A voided invoice owes nothing of its own, whatever its arithmetic says — the same rule
+  // getFeeSlip follows.
+  const ownBalance = invoice.status === 'VOID' ? 0 : Math.max(0, invoice.totalRupees - invoice.paidRupees);
+
+  const child: FeeMessageChild = {
+    fullName: invoice.studentNameSnapshot,
+    classCode: invoice.classCodeSnapshot,
+    lines: invoice.lineItems.map((line) => ({ name: line.name, amountRupees: line.amountRupees })),
+    concessionRupees: invoice.concessionRupees,
+    previousDuesRupees,
+    paidRupees: invoice.paidRupees,
+    totalRupees: ownBalance + previousDuesRupees,
+  };
+
+  const settings = await getSettings();
+  const template =
+    settings.templates.find((t) => t.key === FEE_DEMAND_TEMPLATE_KEY && t.isActive)?.body ?? DEFAULT_TEMPLATE;
+  const note = `Fee should be paid from 1st to ${ordinalDay(settings.feeDueDayOfMonth)} of every month.`;
+
+  const render = (mode: FeeSlipMode): string =>
+    renderTemplate(template, {
+      schoolName: settings.schoolName,
+      schoolAddress: settings.schoolAddress,
+      periodLabel: periodLabel(invoice.period),
+      slip: buildFeeSlip([child], child.totalRupees, mode),
+      note,
+    })
+      // A school with no address on record would otherwise leave a gap under its name.
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+  let message = render('full');
+  if (!waUrlFits(guardian.phone, message)) message = render('compact');
+  message = fitWaMessage(guardian.phone, message);
+
+  return { guardianName: guardian.name, guardianPhone: guardian.phone, waLink: buildWaLink(guardian.phone, message) };
 }
 
 export async function getBatch(batchId: string): Promise<NotificationBatchDto> {

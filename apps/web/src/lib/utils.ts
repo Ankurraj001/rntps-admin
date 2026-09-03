@@ -1,3 +1,4 @@
+import { IST_TIME_ZONE } from '@rntps/shared';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -16,6 +17,24 @@ export function formatDate(dateKey: string): string {
   const [y, m, d] = dateKey.split('-');
   if (!y || !m || !d) return dateKey;
   return `${d}/${m}/${y}`;
+}
+
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-IN', {
+  timeZone: IST_TIME_ZONE,
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: true,
+});
+
+/** Renders an ISO instant (e.g. an invoice's `createdAt`) as an IST date and time. */
+export function formatDateTime(iso: string): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return DATE_TIME_FORMATTER.format(date);
 }
 
 /** Age in whole years, used on the student profile. */

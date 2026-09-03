@@ -63,6 +63,13 @@ export interface NotificationBatchDto {
   unreachable: { studentId: string; fullName: string; classCode: string; reason: string }[];
 }
 
+/** A wa.me link built for one specific invoice's bill, addressed to whichever guardian is reachable. */
+export interface InvoiceWaLinkDto {
+  guardianName: string;
+  guardianPhone: string;
+  waLink: string;
+}
+
 /**
  * Builds a wa.me click-to-chat URL.
  *
