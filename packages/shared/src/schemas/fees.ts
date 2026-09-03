@@ -177,6 +177,22 @@ export interface RecordStudentPaymentResult {
   invoices: InvoiceDto[];
 }
 
+export interface FamilyChildBalanceDto {
+  studentId: string;
+  fullName: string;
+  classCode: string;
+  outstandingRupees: number;
+  /** Non-void invoices for this child — matches how "Total outstanding" counts invoices. */
+  invoiceCount: number;
+}
+
+/** A family's total outstanding and its per-child split, for the Fees tab's family card. */
+export interface FamilyBalanceDto {
+  familyId: string;
+  totalOutstandingRupees: number;
+  children: FamilyChildBalanceDto[];
+}
+
 /** One earlier unpaid bill, listed on a fee slip so the parent can see what it is. */
 export interface FeeSlipDueLine {
   invoiceId: string;

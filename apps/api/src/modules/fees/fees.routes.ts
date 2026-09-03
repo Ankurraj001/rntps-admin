@@ -190,6 +190,14 @@ feesRoutes.get(
   }),
 );
 
+// A family's total outstanding and its per-child split — read-only, no payment action.
+feesRoutes.get(
+  '/families/:familyId/balance',
+  asyncHandler(async (req, res) => {
+    res.json(await service.getFamilyBalance(String(req.params.familyId)));
+  }),
+);
+
 // Pays off as much of a student's total outstanding as one amount covers, oldest invoice
 // first — distinct from POST /invoices/:invoiceId/payments, which pays one specific
 // invoice.

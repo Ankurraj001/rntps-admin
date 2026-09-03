@@ -7,6 +7,7 @@ import {
   formatINR,
   toDateKey,
   type ClassCode,
+  type FamilyBalanceDto,
   type FeeSlipDto,
   type FeeStructureDto,
   type InvoiceDto,
@@ -675,6 +676,42 @@ export async function getStudentInvoices(studentId: string): Promise<InvoiceDto[
     .lean<InvoiceDoc[]>();
   const today = toDateKey();
   return docs.map((doc) => invoiceToDto(doc, today));
+}
+
+/**
+ * A family's total outstanding and how it splits per child, for the "Family outstanding"
+ * card on a student's Fees tab. Every student sharing the familyId is listed — even one
+ * who currently owes nothing — so the card shows the whole family, not just its debtors.
+ */
+export async function getFamilyBalance(familyId: string): Promise<FamilyBalanceDto> {
+  const fam = familyId.toUpperCase();
+
+  const [students, invoices] = await Promise.all([
+    Student.find({ familyId: fam })
+      .select('fullName classCode')
+      .sort({ fullName: 1 })
+      .lean<Pick<StudentDoc, '_id' | 'fullName' | 'classCode'>[]>(),
+    Invoice.find({ familyId: fam, status: { $ne: 'VOID' } }).lean<InvoiceDoc[]>(),
+  ]);
+
+  const byStudent = new Map<string, { outstandingRupees: number; invoiceCount: number }>();
+  for (const inv of invoices) {
+    const entry = byStudent.get(inv.studentId) ?? { outstandingRupees: 0, invoiceCount: 0 };
+    entry.outstandingRupees += Math.max(0, inv.totalRupees - inv.paidRupees);
+    entry.invoiceCount += 1;
+    byStudent.set(inv.studentId, entry);
+  }
+
+  const children = students.map((s) => {
+    const entry = byStudent.get(s._id) ?? { outstandingRupees: 0, invoiceCount: 0 };
+    return { studentId: s._id, fullName: s.fullName, classCode: s.classCode, ...entry };
+  });
+
+  return {
+    familyId: fam,
+    totalOutstandingRupees: children.reduce((sum, c) => sum + c.outstandingRupees, 0),
+    children,
+  };
 }
 
 export { agingBucket };

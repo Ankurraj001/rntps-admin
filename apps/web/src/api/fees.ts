@@ -1,4 +1,5 @@
 import type {
+  FamilyBalanceDto,
   FeeHead,
   FeeSlipDto,
   FeeStructureDto,
@@ -57,6 +58,8 @@ export const feesApi = {
     studentId: string,
     payload: { amountRupees: number; mode: PaymentMode; reference?: string; paidAt: string; notes?: string },
   ) => api.post<RecordStudentPaymentResult>(`/fees/students/${studentId}/payments`, payload),
+  familyBalance: (familyId: string) =>
+    api.get<FamilyBalanceDto>(`/fees/families/${encodeURIComponent(familyId)}/balance`),
 };
 
 export const feeKeys = {
@@ -66,4 +69,5 @@ export const feeKeys = {
   invoice: (id: string) => ['fees', 'invoice', id] as const,
   slip: (id: string) => ['fees', 'slip', id] as const,
   studentInvoices: (studentId: string) => ['fees', 'student', studentId] as const,
+  familyBalance: (familyId: string) => ['fees', 'family', familyId] as const,
 };

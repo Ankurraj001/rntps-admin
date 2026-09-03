@@ -573,3 +573,62 @@ describe('listing invoices', () => {
     expect(res.body.items).toHaveLength(1);
   });
 });
+
+describe('family balance', () => {
+  it('lists every sibling and sums what is still owed, ignoring a fully-paid child', async () => {
+    await setStructure('5');
+    await setStructure('2');
+    const elder = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    const middle = await createStudent(
+      studentInput({ fullName: 'Bela Sharma', classCode: '2', siblingOfStudentId: elder.studentId }),
+    );
+    const youngest = await createStudent(
+      studentInput({ fullName: 'Chetan Sharma', classCode: '2', siblingOfStudentId: elder.studentId }),
+    );
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    // Pay off the middle child's bill in full — they should still be listed, at ₹0.
+    const middleInvoiceId = `${middle.studentId}:${PERIOD}`;
+    await as
+      .post(`/api/v1/fees/invoices/${middleInvoiceId}/payments`)
+      .send({ amountRupees: 1_200, mode: 'CASH', paidAt: '2026-08-05' })
+      .expect(201);
+
+    const res = await as.get(`/api/v1/fees/families/${elder.familyId}/balance`).expect(200);
+
+    expect(res.body.familyId).toBe(elder.familyId);
+    expect(res.body.children).toHaveLength(3);
+    const byName = new Map(
+      res.body.children.map((c: { fullName: string; outstandingRupees: number }) => [c.fullName, c]),
+    );
+    expect(byName.get('Aarav Sharma').outstandingRupees).toBe(1_200);
+    expect(byName.get('Bela Sharma').outstandingRupees).toBe(0);
+    expect(byName.get('Chetan Sharma').outstandingRupees).toBe(1_200);
+    expect(res.body.totalOutstandingRupees).toBe(2_400);
+    expect(youngest.familyId).toBe(elder.familyId);
+  });
+
+  it('excludes a voided invoice from both the child and the family total', async () => {
+    await setStructure('5');
+    const student = await createStudent(studentInput({ fullName: 'Solo Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    const invoiceId = `${student.studentId}:${PERIOD}`;
+    await as.post(`/api/v1/fees/invoices/${invoiceId}/void`).send({ reason: 'Raised in error' }).expect(200);
+
+    const res = await as.get(`/api/v1/fees/families/${student.familyId}/balance`).expect(200);
+
+    expect(res.body.totalOutstandingRupees).toBe(0);
+    expect(res.body.children[0]).toMatchObject({ outstandingRupees: 0, invoiceCount: 0 });
+  });
+
+  it('returns just the one student for a family with no siblings', async () => {
+    await setStructure('5');
+    const student = await createStudent(studentInput({ fullName: 'Solo Sharma', classCode: '5' }));
+
+    const res = await as.get(`/api/v1/fees/families/${student.familyId}/balance`).expect(200);
+
+    expect(res.body.children).toEqual([
+      { studentId: student.studentId, fullName: 'Solo Sharma', classCode: '5', outstandingRupees: 0, invoiceCount: 0 },
+    ]);
+  });
+});

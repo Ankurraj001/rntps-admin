@@ -772,6 +772,14 @@ function StudentFeesTab({
     enabled: canManage,
   });
 
+  // Families usually pay for every sibling at once, so the number that matters at the
+  // counter is often this, not just the one student being viewed.
+  const familyBalance = useQuery({
+    queryKey: feeKeys.familyBalance(student.familyId),
+    queryFn: () => feesApi.familyBalance(student.familyId),
+    enabled: canManage,
+  });
+
   if (!canManage) {
     return (
       <Card>
@@ -803,6 +811,43 @@ function StudentFeesTab({
             </p>
           </CardBody>
         </Card>
+
+        {familyBalance.data && familyBalance.data.children.length > 1 && (
+          <Card>
+            <CardHeader
+              title="Family outstanding"
+              description={`Family ID ${student.familyId} — total owed across every sibling`}
+            />
+            <CardBody className="space-y-3">
+              <p className="text-2xl font-semibold tabular-nums">
+                {formatINR(familyBalance.data.totalOutstandingRupees)}
+              </p>
+              <ul className="divide-y divide-slate-100">
+                {familyBalance.data.children.map((child) => (
+                  <li
+                    key={child.studentId}
+                    className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0"
+                  >
+                    {child.studentId === studentId ? (
+                      <span className="text-sm font-medium">
+                        {child.fullName}{' '}
+                        <span className="text-xs text-slate-500">(this student)</span>
+                      </span>
+                    ) : (
+                      <Link
+                        to={`/students/${child.studentId}`}
+                        className="text-sm font-medium hover:text-brand-700"
+                      >
+                        {child.fullName}
+                      </Link>
+                    )}
+                    <span className="text-sm tabular-nums">{formatINR(child.outstandingRupees)}</span>
+                  </li>
+                ))}
+              </ul>
+            </CardBody>
+          </Card>
+        )}
 
         <Card>
           <CardHeader
