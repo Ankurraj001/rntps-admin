@@ -166,6 +166,17 @@ export interface InvoiceDto {
   createdAt: string;
 }
 
+/**
+ * Result of paying a student's outstanding invoices in one go (oldest due date first),
+ * rather than one specific invoice. Each invoice actually touched keeps its own payment
+ * and its own receipt number — this never merges invoices, it only allocates one amount
+ * across however many of them the payment reaches.
+ */
+export interface RecordStudentPaymentResult {
+  totalAppliedRupees: number;
+  invoices: InvoiceDto[];
+}
+
 /** One earlier unpaid bill, listed on a fee slip so the parent can see what it is. */
 export interface FeeSlipDueLine {
   invoiceId: string;

@@ -18,7 +18,8 @@
     "mail:test": "tsx src/scripts/testMail.ts",
     "tokens:clear-expired": "tsx src/scripts/clearExpiredResetTokens.ts",
     "migrate:drop-plaintext": "tsx src/scripts/dropPlaintextPasswords.ts",
-    "migrate:rupees": "tsx src/scripts/migratePaiseToRupees.ts"
+    "migrate:rupees": "tsx src/scripts/migratePaiseToRupees.ts",
+    "backfill:tuition": "tsx src/scripts/backfillTuitionFee.ts"
   },
   "dependencies": {
     "@rntps/shared": "*",

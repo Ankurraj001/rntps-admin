@@ -1,4 +1,4 @@
-import { CLASS_CODES, INVOICE_STATUSES, classLabel, formatINR, toDateKey } from '@rntps/shared';
+import { CLASS_CODES, INVOICE_STATUSES, classLabel, formatINR } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { useState } from 'react';
@@ -32,9 +32,12 @@ export function InvoicesPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [classCode, setClassCode] = useState('');
-  // Defaults to this month; a `?period=` link still wins. Clearing the field shows every
-  // month, which is how you find an unpaid invoice from earlier in the year.
-  const [period, setPeriod] = useState(searchParams.get('period') ?? toDateKey().slice(0, 7));
+  // Defaults to every month so an unpaid invoice from earlier in the year isn't silently
+  // hidden — the totals shown on a student's own Fees tab and the dashboard are never
+  // scoped to one month either, and this filter disagreeing with those was read as the
+  // figures not matching. An explicit `?period=` link (e.g. a dashboard drill-down) still
+  // pre-fills one month.
+  const [period, setPeriod] = useState(searchParams.get('period') ?? '');
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [page, setPage] = useState(1);
 
@@ -90,13 +93,16 @@ export function InvoicesPage() {
                 onChange={(e) => onFilterChange(setSearch)(e.target.value)}
               />
             </div>
-            <Input
-              aria-label="Month"
-              type="month"
-              className="w-40"
-              value={period}
-              onChange={(e) => onFilterChange(setPeriod)(e.target.value)}
-            />
+            <div className="flex flex-col gap-1">
+              <Input
+                aria-label="Month"
+                type="month"
+                className="w-40"
+                value={period}
+                onChange={(e) => onFilterChange(setPeriod)(e.target.value)}
+              />
+              {!period && <span className="text-xs text-slate-500">Showing all months</span>}
+            </div>
             <Select
               aria-label="Status"
               className="w-36"
@@ -145,8 +151,8 @@ export function InvoicesPage() {
           {invoices.data?.items.length === 0 && (
             <EmptyState
               title="No invoices match those filters"
-              // The month filter is on by default, so say what is hiding the rest rather
-              // than leaving someone to wonder where last month's unpaid invoices went.
+              // Every month shows by default, so an empty result with a month picked means
+              // that specific month, not "nothing has ever been billed".
               description={
                 period
                   ? `Nothing for ${period}. Clear the month to see every invoice.`

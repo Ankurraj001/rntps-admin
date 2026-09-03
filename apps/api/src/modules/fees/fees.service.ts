@@ -16,6 +16,7 @@ import {
   type ListInvoicesQuery,
   type Paginated,
   type RecordPaymentPayload,
+  type RecordStudentPaymentResult,
   type UpsertFeeStructurePayload,
 } from '@rntps/shared';
 import { AppError } from '../../lib/AppError.js';
@@ -503,6 +504,65 @@ export async function recordPayment(
   }
 
   return getInvoice(invoiceIdValue);
+}
+
+/**
+ * Pays off however much of a student's total outstanding one payment covers, oldest due
+ * date first, without merging or touching invoices beyond recording a payment on each one
+ * it reaches.
+ *
+ * Invoices deliberately stay independent (see `getFeeSlip`'s own comment on this) — there
+ * are no database transactions in this app, so physically folding an old balance into a
+ * new invoice and closing out the old one would risk a window where both looked due if a
+ * write failed partway. Allocating across existing, real invoices needs nothing like that:
+ * each allocation is just an ordinary call to `recordPayment`, atomic on its own document,
+ * so a mid-loop failure only ever leaves the remainder unpaid — never double-counted.
+ */
+export async function recordStudentPayment(
+  studentId: string,
+  payload: RecordPaymentPayload,
+  actorId: string,
+): Promise<RecordStudentPaymentResult> {
+  const outstanding = await Invoice.find({
+    studentId: studentId.toUpperCase(),
+    status: { $in: ['DUE', 'PARTIAL'] },
+  })
+    .sort({ dueDate: 1 })
+    .lean<InvoiceDoc[]>();
+
+  if (outstanding.length === 0) {
+    throw AppError.badRequest('Nothing outstanding for this student');
+  }
+
+  const totalPayableRupees = outstanding.reduce((sum, inv) => sum + (inv.totalRupees - inv.paidRupees), 0);
+  if (payload.amountRupees > totalPayableRupees) {
+    throw AppError.badRequest(`That is more than the total outstanding of ${formatINR(totalPayableRupees)}`);
+  }
+
+  let remaining = payload.amountRupees;
+  const invoices: InvoiceDto[] = [];
+  try {
+    for (const inv of outstanding) {
+      if (remaining <= 0) break;
+      const allocate = Math.min(remaining, inv.totalRupees - inv.paidRupees);
+      if (allocate <= 0) continue;
+      invoices.push(await recordPayment(inv._id, { ...payload, amountRupees: allocate }, actorId));
+      remaining -= allocate;
+    }
+  } catch (error) {
+    // Whatever was applied before the failure stands — there is no rollback without a
+    // transaction. Say so, and say how much, rather than surfacing a bare "conflict" that
+    // reads as if nothing happened.
+    const applied = payload.amountRupees - remaining;
+    if (applied > 0) {
+      throw AppError.conflict(
+        `Applied ${formatINR(applied)} before an invoice changed — reload and try again for the rest`,
+      );
+    }
+    throw error;
+  }
+
+  return { totalAppliedRupees: payload.amountRupees - remaining, invoices };
 }
 
 export async function reversePayment(

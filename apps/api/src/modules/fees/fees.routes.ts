@@ -189,3 +189,28 @@ feesRoutes.get(
     res.json({ items: await service.getStudentInvoices(String(req.params.studentId)) });
   }),
 );
+
+// Pays off as much of a student's total outstanding as one amount covers, oldest invoice
+// first — distinct from POST /invoices/:invoiceId/payments, which pays one specific
+// invoice.
+feesRoutes.post(
+  '/students/:studentId/payments',
+  validate(recordPaymentSchema),
+  asyncHandler(async (req, res) => {
+    const studentId = String(req.params.studentId);
+    const payload = validatedBody(req, recordPaymentSchema);
+    const result = await service.recordStudentPayment(studentId, payload, currentUser(req).id);
+
+    await recordAudit(req, {
+      action: 'payment.record',
+      entity: 'student',
+      entityId: studentId,
+      after: {
+        amountRupees: payload.amountRupees,
+        mode: payload.mode,
+        invoicesTouched: result.invoices.map((i) => i.id),
+      },
+    });
+    res.status(201).json(result);
+  }),
+);

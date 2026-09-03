@@ -1,22 +1,14 @@
-import {
-  PAYMENT_MODES,
-  PAYMENT_MODE_LABELS,
-  classLabel,
-  formatINR,
-  toDateKey,
-  type PaymentMode,
-} from '@rntps/shared';
+import { PAYMENT_MODE_LABELS, classLabel, formatINR } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Ban, Printer, Undo2 } from 'lucide-react';
-import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { feeKeys, feesApi } from '@/api/fees';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
-import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
-import { Field, Input, Select } from '@/components/ui/Field';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
+import { RecordPaymentCard } from '@/components/fees/RecordPaymentCard';
 import { formatDate } from '@/lib/utils';
 import { InvoiceStatusBadge } from './InvoicesPage';
 
@@ -28,6 +20,10 @@ export function InvoiceDetailPage() {
   const invoice = useQuery({
     queryKey: feeKeys.invoice(invoiceId),
     queryFn: () => feesApi.invoice(invoiceId),
+    // Money is entered live on this page — a stale balance here is what let a payment
+    // form pre-fill with a figure that no longer matched the server.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: feeKeys.all });
@@ -202,7 +198,13 @@ export function InvoiceDetailPage() {
         </div>
 
         <div className="space-y-5">
-          {canPay && <RecordPaymentCard invoiceId={invoiceId} balanceRupees={data.balanceRupees} onDone={refresh} />}
+          {canPay && (
+            <RecordPaymentCard
+              balanceRupees={data.balanceRupees}
+              onSubmit={(payload) => feesApi.recordPayment(invoiceId, payload)}
+              onDone={refresh}
+            />
+          )}
 
           {data.status !== 'VOID' && (
             <Card>
@@ -235,92 +237,5 @@ export function InvoiceDetailPage() {
         </div>
       </div>
     </>
-  );
-}
-
-function RecordPaymentCard({
-  invoiceId,
-  balanceRupees,
-  onDone,
-}: {
-  invoiceId: string;
-  balanceRupees: number;
-  onDone: () => void;
-}) {
-  const [rupees, setRupees] = useState(String(balanceRupees));
-  const [mode, setMode] = useState<PaymentMode>('CASH');
-  const [reference, setReference] = useState('');
-  const [paidAt, setPaidAt] = useState(toDateKey());
-  const [notes, setNotes] = useState('');
-
-  const typed = Number(rupees || 0);
-  const amountRupees = Math.trunc(typed);
-  const tooMuch = amountRupees > balanceRupees;
-  // Refuse a fractional amount rather than quietly truncating it — a receipt that says
-  // ₹500 for a ₹500.75 payment is a reconciliation problem months later.
-  const amountError = tooMuch
-    ? 'More than the outstanding balance'
-    : Number.isInteger(typed)
-      ? undefined
-      : 'Enter a whole number of rupees';
-
-  const record = useMutation({
-    mutationFn: () =>
-      feesApi.recordPayment(invoiceId, { amountRupees, mode, reference, paidAt, notes }),
-    onSuccess: () => {
-      setReference('');
-      setNotes('');
-      onDone();
-    },
-  });
-
-  return (
-    <Card>
-      <CardHeader title="Record payment" description={`Outstanding ${formatINR(balanceRupees)}`} />
-      <CardBody className="space-y-3">
-        {record.error && <ErrorBlock message={(record.error as Error).message} />}
-
-        <Field label="Amount (₹)" required error={amountError}>
-          <Input
-            type="number"
-            min="1"
-            step="1"
-            value={rupees}
-            onChange={(e) => setRupees(e.target.value)}
-          />
-        </Field>
-
-        <Field label="Mode" required>
-          <Select value={mode} onChange={(e) => setMode(e.target.value as PaymentMode)}>
-            {PAYMENT_MODES.map((value) => (
-              <option key={value} value={value}>
-                {PAYMENT_MODE_LABELS[value]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-
-        <Field label="Reference" hint="UPI ref, cheque number — optional">
-          <Input value={reference} onChange={(e) => setReference(e.target.value)} />
-        </Field>
-
-        <Field label="Received on" required>
-          <Input type="date" max={toDateKey()} value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
-        </Field>
-
-        <Field label="Notes">
-          <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
-
-        <Button
-          className="w-full"
-          onClick={() => record.mutate()}
-          disabled={record.isPending || Boolean(amountError) || amountRupees <= 0}
-        >
-          {record.isPending && <Spinner />}
-          Record {formatINR(amountRupees)}
-        </Button>
-      </CardBody>
-    </Card>
   );
 }

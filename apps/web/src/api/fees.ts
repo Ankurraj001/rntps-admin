@@ -7,6 +7,7 @@ import type {
   InvoiceRunResult,
   Paginated,
   PaymentMode,
+  RecordStudentPaymentResult,
 } from '@rntps/shared';
 import { api, qs } from '@/lib/api';
 
@@ -50,6 +51,12 @@ export const feesApi = {
     api.post<InvoiceDto>(`/fees/invoices/${encodeURIComponent(id)}/void`, { reason }),
   studentInvoices: (studentId: string) =>
     api.get<{ items: InvoiceDto[] }>(`/fees/students/${studentId}/invoices`),
+  /** Pays off as much of a student's total outstanding as one amount covers, oldest
+   *  invoice first — as opposed to `recordPayment`, which pays one specific invoice. */
+  recordStudentPayment: (
+    studentId: string,
+    payload: { amountRupees: number; mode: PaymentMode; reference?: string; paidAt: string; notes?: string },
+  ) => api.post<RecordStudentPaymentResult>(`/fees/students/${studentId}/payments`, payload),
 };
 
 export const feeKeys = {

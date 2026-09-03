@@ -317,6 +317,88 @@ describe('recording payments', () => {
   });
 });
 
+describe('recording a payment across a student’s outstanding invoices', () => {
+  let studentId: string;
+  let augInvoiceId: string;
+  let septInvoiceId: string;
+
+  beforeEach(async () => {
+    // August billed ₹600, ₹400 paid — ₹200 still due. The structure changes before
+    // September's run so the two invoices are genuinely different amounts, matching the
+    // reported scenario rather than two coincidentally-identical bills.
+    await setStructure('5', [{ code: 'TUITION', name: 'Tuition Fee', amountRupees: 600, appliesTo: 'ALL' }]);
+    const student = await createStudent(studentInput({ fullName: 'Ankur Raj', classCode: '5' }));
+    studentId = student.studentId;
+
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-08' }).expect(200);
+    augInvoiceId = `${studentId}:2026-08`;
+    await as
+      .post(`/api/v1/fees/invoices/${augInvoiceId}/payments`)
+      .send({ amountRupees: 400, mode: 'CASH', paidAt: '2026-08-05' })
+      .expect(201);
+
+    await setStructure('5', [{ code: 'TUITION', name: 'Tuition Fee', amountRupees: 500, appliesTo: 'ALL' }]);
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-09' }).expect(200);
+    septInvoiceId = `${studentId}:2026-09`;
+  });
+
+  const payStudent = (amountRupees: number) =>
+    as
+      .post(`/api/v1/fees/students/${studentId}/payments`)
+      .send({ amountRupees, mode: 'CASH', paidAt: '2026-09-05' });
+
+  it('pays off only the oldest invoice when the amount matches its balance exactly', async () => {
+    const res = await payStudent(200).expect(201);
+    expect(res.body.totalAppliedRupees).toBe(200);
+    expect(res.body.invoices).toHaveLength(1);
+    expect(res.body.invoices[0].id).toBe(augInvoiceId);
+
+    const aug = await Invoice.findById(augInvoiceId).lean();
+    const sept = await Invoice.findById(septInvoiceId).lean();
+    expect(aug).toMatchObject({ status: 'PAID', paidRupees: 600 });
+    expect(sept).toMatchObject({ status: 'DUE', paidRupees: 0 });
+  });
+
+  it('spills into the next-oldest invoice once the oldest is fully paid', async () => {
+    const res = await payStudent(300).expect(201);
+    expect(res.body.invoices).toHaveLength(2);
+
+    const aug = await Invoice.findById(augInvoiceId).lean();
+    const sept = await Invoice.findById(septInvoiceId).lean();
+    expect(aug).toMatchObject({ status: 'PAID', paidRupees: 600 });
+    expect(sept).toMatchObject({ status: 'PARTIAL', paidRupees: 100 });
+  });
+
+  it('pays everything owed across both invoices in one go, with a receipt each', async () => {
+    const res = await payStudent(700).expect(201);
+    expect(res.body.totalAppliedRupees).toBe(700);
+    expect(res.body.invoices).toHaveLength(2);
+
+    // One receipt per invoice this payment actually touched — not one receipt shared
+    // across both, and not merged with August's earlier, unrelated payment.
+    const newReceipts = res.body.invoices.map(
+      (inv: { payments: { receiptNo: string }[] }) => inv.payments.at(-1)?.receiptNo,
+    );
+    expect(new Set(newReceipts).size).toBe(2);
+
+    const aug = await Invoice.findById(augInvoiceId).lean();
+    const sept = await Invoice.findById(septInvoiceId).lean();
+    expect(aug?.status).toBe('PAID');
+    expect(sept?.status).toBe('PAID');
+  });
+
+  it('refuses to pay more than the total outstanding', async () => {
+    const res = await payStudent(701).expect(400);
+    expect(res.body.error.message).toMatch(/total outstanding/i);
+  });
+
+  it('400s when nothing is outstanding for the student', async () => {
+    await payStudent(700).expect(201);
+    const res = await payStudent(1).expect(400);
+    expect(res.body.error.message).toMatch(/nothing outstanding/i);
+  });
+});
+
 describe('reversing a payment', () => {
   let invoiceId: string;
 

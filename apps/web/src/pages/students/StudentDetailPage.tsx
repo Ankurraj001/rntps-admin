@@ -8,13 +8,14 @@ import {
   TRANSPORT_HEAD_CODE,
 } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Pencil, Users } from 'lucide-react';
+import { ArrowLeft, Pencil, Printer, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { attendanceApi, attendanceKeys } from '@/api/attendance';
 import { feeKeys, feesApi } from '@/api/fees';
 import { studentKeys, studentsApi } from '@/api/students';
 import { PageHeader } from '@/components/layout/AppShell';
+import { RecordPaymentCard } from '@/components/fees/RecordPaymentCard';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
@@ -747,6 +748,14 @@ function StudentFeesTab({
   canManage: boolean;
 }) {
   const studentId = student.studentId;
+  const queryClient = useQueryClient();
+  // One consolidated payment can land on more than one invoice, each minting its own
+  // receipt — kept around just long enough to point at all of them once, not merged into
+  // a single number that would hide which invoices were actually touched.
+  const [lastPaymentReceipts, setLastPaymentReceipts] = useState<
+    { invoiceId: string; period: string; receiptNo: string; amountRupees: number }[] | null
+  >(null);
+
   const invoices = useQuery({
     queryKey: feeKeys.studentInvoices(studentId),
     queryFn: () => feesApi.studentInvoices(studentId),
@@ -780,39 +789,101 @@ function StudentFeesTab({
   const extras = monthlyExtrasFor(student, structure, structures.isPending);
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardBody className="flex flex-wrap items-baseline justify-between gap-3">
-          <div>
-            <p className="text-sm text-slate-500">Total outstanding</p>
-            <p className="text-3xl font-semibold tabular-nums">{formatINR(outstanding)}</p>
-          </div>
-          <p className="text-xs text-slate-500">
-            Across {live.length} {live.length === 1 ? 'invoice' : 'invoices'}
-          </p>
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader
-          title="Invoices"
-          description="One per month, covering fees, transport and any charges"
-        />
-        {items.length === 0 ? (
-          <EmptyState
-            title="No invoices yet"
-            description="Generate invoices for a month to see them here."
-          />
-        ) : (
-          <CardBody className="divide-y divide-slate-100">
-            {items.map((invoice) => (
-              <InvoiceRow key={invoice.id} invoice={invoice} label={invoice.period} />
-            ))}
+    <div className="grid gap-5 lg:grid-cols-3">
+      <div className="space-y-5 lg:col-span-2">
+        <Card>
+          <CardBody className="flex flex-wrap items-baseline justify-between gap-3">
+            <div>
+              <p className="text-sm text-slate-500">Total outstanding</p>
+              <p className="text-3xl font-semibold tabular-nums">{formatINR(outstanding)}</p>
+            </div>
+            <p className="text-xs text-slate-500">
+              Across {live.length} {live.length === 1 ? 'invoice' : 'invoices'}
+            </p>
           </CardBody>
-        )}
-      </Card>
+        </Card>
 
-      <DuesCard studentId={studentId} extras={extras} />
+        <Card>
+          <CardHeader
+            title="Invoices"
+            description="One per month, covering fees, transport and any charges"
+          />
+          {items.length === 0 ? (
+            <EmptyState
+              title="No invoices yet"
+              description="Generate invoices for a month to see them here."
+            />
+          ) : (
+            <CardBody className="divide-y divide-slate-100">
+              {items.map((invoice) => (
+                <InvoiceRow key={invoice.id} invoice={invoice} label={invoice.period} />
+              ))}
+            </CardBody>
+          )}
+        </Card>
+
+        <DuesCard studentId={studentId} extras={extras} />
+      </div>
+
+      <div className="space-y-5">
+        {outstanding > 0 && (
+          <RecordPaymentCard
+            title="Record payment"
+            description={`Outstanding ${formatINR(outstanding)} across ${live.length} ${
+              live.length === 1 ? 'invoice' : 'invoices'
+            }`}
+            balanceRupees={outstanding}
+            onSubmit={async (payload) => {
+              const result = await feesApi.recordStudentPayment(studentId, payload);
+              setLastPaymentReceipts(
+                result.invoices.map((invoice) => {
+                  const last = invoice.payments[invoice.payments.length - 1];
+                  return {
+                    invoiceId: invoice.id,
+                    period: invoice.period,
+                    receiptNo: last?.receiptNo ?? '',
+                    amountRupees: last?.amountRupees ?? 0,
+                  };
+                }),
+              );
+              return result;
+            }}
+            onDone={() => queryClient.invalidateQueries({ queryKey: feeKeys.studentInvoices(studentId) })}
+          />
+        )}
+
+        {lastPaymentReceipts && lastPaymentReceipts.length > 0 && (
+          <div className="rounded-md bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-medium">
+                {lastPaymentReceipts.length > 1
+                  ? `Recorded across ${lastPaymentReceipts.length} invoices`
+                  : 'Recorded'}
+              </p>
+              <button
+                type="button"
+                className="text-xs underline"
+                onClick={() => setLastPaymentReceipts(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+            <ul className="mt-1 space-y-1">
+              {lastPaymentReceipts.map((receipt) => (
+                <li key={receipt.receiptNo}>
+                  {receipt.period} — {formatINR(receipt.amountRupees)} —{' '}
+                  <Link
+                    className="underline"
+                    to={`/fees/receipts/${encodeURIComponent(receipt.invoiceId)}/${receipt.receiptNo}`}
+                  >
+                    Receipt {receipt.receiptNo}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -825,24 +896,34 @@ function InvoiceRow({
   label: string;
 }) {
   return (
-    <Link
-      to={`/fees/invoices/${encodeURIComponent(invoice.id)}`}
-      className="flex items-center justify-between gap-3 py-3 text-sm first:pt-0 last:pb-0 hover:text-brand-700"
-    >
-      <span className="min-w-0">
-        <span className="font-medium">{label}</span>
-        {invoice.status === 'VOID' && <Badge tone="slate">Void</Badge>}
-      </span>
-      <span className="flex items-center gap-4 tabular-nums">
-        <span className="text-slate-600">{formatINR(invoice.totalRupees)}</span>
-        <span className="font-medium">
-          {invoice.status === 'VOID'
-            ? '—'
-            : invoice.balanceRupees > 0
-              ? `${formatINR(invoice.balanceRupees)} due`
-              : 'settled'}
+    <div className="flex items-center gap-3 py-3 text-sm first:pt-0 last:pb-0">
+      <Link
+        to={`/fees/invoices/${encodeURIComponent(invoice.id)}`}
+        className="flex min-w-0 flex-1 items-center justify-between gap-3 hover:text-brand-700"
+      >
+        <span className="min-w-0">
+          <span className="font-medium">{label}</span>
+          {invoice.status === 'VOID' && <Badge tone="slate">Void</Badge>}
         </span>
-      </span>
-    </Link>
+        <span className="flex items-center gap-4 tabular-nums">
+          <span className="text-slate-600">{formatINR(invoice.totalRupees)}</span>
+          <span className="font-medium">
+            {invoice.status === 'VOID'
+              ? '—'
+              : invoice.balanceRupees > 0
+                ? `${formatINR(invoice.balanceRupees)} due`
+                : 'settled'}
+          </span>
+        </span>
+      </Link>
+      <Link
+        to={`/fees/invoices/${encodeURIComponent(invoice.id)}/slip`}
+        className="shrink-0 text-slate-400 hover:text-brand-700"
+        aria-label={`Fee slip for ${label}`}
+        title="Fee slip"
+      >
+        <Printer className="h-4 w-4" aria-hidden />
+      </Link>
+    </div>
   );
 }
