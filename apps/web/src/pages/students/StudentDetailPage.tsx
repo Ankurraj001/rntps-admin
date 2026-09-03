@@ -1,5 +1,6 @@
 import {
   STUDENT_STATUSES,
+  academicYearForPeriod,
   buildLineItems,
   classLabel,
   formatAadhaar,
@@ -314,8 +315,19 @@ function FamilyTab({
  *   - **Waiting for the next invoice** — charges entered here. They are not invoices yet;
  *     the next monthly run folds them into that month's single invoice.
  *   - **Already billed** — charges that a monthly invoice has absorbed, with a link to it.
+ *     This group follows the session picked on the Invoices card, since it is history and
+ *     grows with every month. The two groups above are about now and next, so they always
+ *     show whichever session is selected.
  */
-function DuesCard({ studentId, extras }: { studentId: string; extras: MonthlyExtra[] }) {
+function DuesCard({
+  studentId,
+  extras,
+  year,
+}: {
+  studentId: string;
+  extras: MonthlyExtra[];
+  year: string;
+}) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -357,7 +369,15 @@ function DuesCard({ studentId, extras }: { studentId: string; extras: MonthlyExt
 
   const items = charges.data?.items ?? [];
   const pending = items.filter((charge) => charge.billedOnInvoiceId === null);
-  const billed = items.filter((charge) => charge.billedOnInvoiceId !== null);
+  const billed = items.filter(
+    (charge) =>
+      charge.billedOnInvoiceId !== null &&
+      (year === ALL_YEARS ||
+        // A billed charge with no period on record cannot be filed under a session.
+        // Showing it in every year beats dropping it out of all of them.
+        charge.billedPeriod === null ||
+        academicYearForPeriod(charge.billedPeriod) === year),
+  );
   const pendingTotal = pending.reduce((sum, charge) => sum + charge.amountRupees, 0);
 
   return (
@@ -433,7 +453,7 @@ function DuesCard({ studentId, extras }: { studentId: string; extras: MonthlyExt
       {billed.length > 0 && (
         <CardBody className="space-y-2 border-t border-slate-100">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-            Already billed
+            Already billed{year !== ALL_YEARS && ` · ${year}`}
           </p>
           {billed.map((charge) => (
             <div key={charge.id} className="flex items-center justify-between gap-3 text-sm">
@@ -741,6 +761,42 @@ function monthlyExtrasFor(
   return rows;
 }
 
+/** Sentinel for "don't filter" in the session picker — no academic year can collide with it. */
+const ALL_YEARS = 'ALL';
+
+/**
+ * Sessions offered in the picker, newest first.
+ *
+ * The student's own session is always included even when nothing has been billed in it
+ * yet: in April, before the first run of a new session, the picker would otherwise not
+ * offer the year the school is actually in.
+ */
+function academicYearsIn(
+  invoices: import('@rntps/shared').InvoiceDto[],
+  studentYear: string,
+): string[] {
+  const years = new Set(invoices.map((invoice) => invoice.academicYear));
+  years.add(studentYear);
+  return [...years].sort().reverse();
+}
+
+/**
+ * Which session the picker opens on — the student's current one, which is what a parent
+ * at the counter is asking about.
+ *
+ * Falls back to the newest session that actually has invoices when the current one has
+ * none, because opening on an empty list reads as a broken screen rather than a filtered
+ * one. That is the normal state for an alumnus, and for anyone whose billing stopped.
+ */
+function defaultAcademicYear(
+  invoices: import('@rntps/shared').InvoiceDto[],
+  studentYear: string,
+): string {
+  if (invoices.some((invoice) => invoice.academicYear === studentYear)) return studentYear;
+  // Invoices arrive newest period first, so the first one carries the latest session.
+  return invoices[0]?.academicYear ?? studentYear;
+}
+
 function StudentFeesTab({
   student,
   canManage,
@@ -750,6 +806,10 @@ function StudentFeesTab({
 }) {
   const studentId = student.studentId;
   const queryClient = useQueryClient();
+  // Null until the picker is touched: the sensible default depends on invoices that have
+  // not loaded on first render, so it is resolved lazily below rather than through an
+  // effect that would flash the wrong session first.
+  const [pickedYear, setPickedYear] = useState<string | null>(null);
   // One consolidated payment can land on more than one invoice, each minting its own
   // receipt — kept around just long enough to point at all of them once, not merged into
   // a single number that would hide which invoices were actually touched.
@@ -792,7 +852,23 @@ function StudentFeesTab({
 
   const items = invoices.data.items;
   const live = items.filter((i) => i.status !== 'VOID');
+  // Every session on purpose, not the filtered view: this is the figure collected against
+  // at the counter, and the payment card below settles oldest invoice first across all
+  // years. A total that moved with the picker would name a different amount from the one
+  // actually being paid.
   const outstanding = live.reduce((sum, i) => sum + i.balanceRupees, 0);
+
+  const years = academicYearsIn(items, student.academicYear);
+  const year = pickedYear ?? defaultAcademicYear(items, student.academicYear);
+  const shown = year === ALL_YEARS ? items : items.filter((i) => i.academicYear === year);
+  // What the picker is holding back, so a debt from an earlier session cannot sit unseen
+  // behind a filter that opens on this one.
+  const dueElsewhere =
+    year === ALL_YEARS
+      ? 0
+      : live
+          .filter((invoice) => invoice.academicYear !== year)
+          .reduce((sum, invoice) => sum + invoice.balanceRupees, 0);
 
   const structure = structures.data?.items.find((item) => item.classCode === student.classCode);
   const extras = monthlyExtrasFor(student, structure, structures.isPending);
@@ -853,22 +929,56 @@ function StudentFeesTab({
           <CardHeader
             title="Invoices"
             description="One per month, covering fees, transport and any charges"
+            action={
+              <Select
+                aria-label="Filter invoices by session"
+                className="w-36 shrink-0"
+                value={year}
+                onChange={(event) => setPickedYear(event.target.value)}
+              >
+                <option value={ALL_YEARS}>All years</option>
+                {years.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </Select>
+            }
           />
           {items.length === 0 ? (
             <EmptyState
               title="No invoices yet"
               description="Generate invoices for a month to see them here."
             />
+          ) : shown.length === 0 ? (
+            <EmptyState
+              title={`Nothing billed in ${year}`}
+              description="Pick another session to see this student's other invoices."
+            />
           ) : (
             <CardBody className="divide-y divide-slate-100">
-              {items.map((invoice) => (
+              {shown.map((invoice) => (
                 <InvoiceRow key={invoice.id} invoice={invoice} label={invoice.period} />
               ))}
             </CardBody>
           )}
+          {dueElsewhere > 0 && (
+            <CardBody className="border-t border-slate-100">
+              <p className="text-xs text-amber-700">
+                {formatINR(dueElsewhere)} still due outside {year}.{' '}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => setPickedYear(ALL_YEARS)}
+                >
+                  Show all years
+                </button>
+              </p>
+            </CardBody>
+          )}
         </Card>
 
-        <DuesCard studentId={studentId} extras={extras} />
+        <DuesCard studentId={studentId} extras={extras} year={year} />
       </div>
 
       <div className="space-y-5">
