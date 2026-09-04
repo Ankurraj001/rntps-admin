@@ -13,6 +13,7 @@ import { CalendarDays, Check, Info } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { attendanceApi, attendanceKeys } from '@/api/attendance';
 import { useCurrentUser } from '@/auth/AuthProvider';
+import { WhatsAppAbsenteesButton } from '@/components/attendance/WhatsAppAbsenteesButton';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -144,14 +145,28 @@ export function MarkAttendancePage() {
         title="Mark attendance"
         description={`Everyone starts as present — mark the exceptions. Keys: ${SHORTCUT_HINT}.`}
         action={
-          <Button
-            onClick={() => save.mutate()}
-            disabled={save.isPending || entries.length === 0 || isReadOnly}
-          >
-            {save.isPending && <Spinner />}
-            {saved ? <Check className="h-4 w-4" aria-hidden /> : null}
-            {saved ? 'Saved' : 'Save attendance'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => save.mutate()}
+              disabled={save.isPending || entries.length === 0 || isReadOnly}
+            >
+              {save.isPending && <Spinner />}
+              {saved ? <Check className="h-4 w-4" aria-hidden /> : null}
+              {saved ? 'Saved' : 'Save attendance'}
+            </Button>
+            {/*
+              `saved` as well as `submittedAt`: a save invalidates the roster query, so
+              `submittedAt` only arrives once the refetch lands and the button would
+              otherwise stay disabled for that gap.
+            */}
+            <WhatsAppAbsenteesButton
+              entries={entries}
+              marks={marks}
+              classCode={classCode}
+              dateKey={dateKey}
+              disabled={entries.length === 0 || isReadOnly || !(saved || roster.data?.submittedAt)}
+            />
+          </div>
         }
       />
 
