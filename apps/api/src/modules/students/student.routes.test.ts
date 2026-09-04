@@ -359,6 +359,24 @@ describe('editing a student after onboarding', () => {
     expect(res.body.concession).toEqual({ type: 'PERCENT', value: 25, reason: 'Staff child' });
   });
 
+  it('accepts a flat discount with no reason, and clears it again', async () => {
+    const studentId = await onboard();
+
+    // Exactly what the Discount field on the student form sends: a flat amount, no reason.
+    const set = await asAdmin
+      .patch(`/api/v1/students/${studentId}`)
+      .send({ concession: { type: 'FLAT', value: 200, reason: '' } })
+      .expect(200);
+    expect(set.body.concession).toEqual({ type: 'FLAT', value: 200, reason: '' });
+
+    // Clearing the field sends NONE with a zero value, which the schema pairs strictly.
+    const cleared = await asAdmin
+      .patch(`/api/v1/students/${studentId}`)
+      .send({ concession: { type: 'NONE', value: 0, reason: '' } })
+      .expect(200);
+    expect(cleared.body.concession).toEqual({ type: 'NONE', value: 0, reason: '' });
+  });
+
   it('still enforces validation on edit, not just on create', async () => {
     const studentId = await onboard();
 

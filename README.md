@@ -533,8 +533,36 @@ name so the invoice still reads "Transport".
 - Raising the class transport head moves everyone **without** an override, and leaves overridden
   students alone. That is the point of the split.
 - The preview marks overridden rows, so a run is auditable at a glance.
-- A concession applies to the whole invoice, transport included. If you would rather concessions
-  covered tuition only, that is a change to `concessionFor()` in `packages/shared/src/schemas/fees.ts`.
+- A discount applies to the transport fare as well as tuition, since both are the school's own fee
+  lines. It does not apply to one-off charges — see "A concession does not apply to charges" below.
+
+### Discounts
+
+A student can carry a **standing monthly discount**, set as **Discount (₹)** on their record next to
+the transport fare. It is a whole number of rupees, and it comes off **every** monthly invoice for
+that student until it is changed — this is the only per-student discount there is, and it is
+deliberately not a per-invoice one.
+
+- **Blank means no discount.** Any amount is stored as a `FLAT` concession
+  (`concessionSchema`, `packages/shared/src/schemas/student.ts`); the form keeps `type` and `value`
+  in step so the two can never disagree.
+- **It comes off the class fee lines only** — tuition and transport, not an exam fee, trip or fine.
+  The rule and its reasoning are under "A concession does not apply to charges".
+- **It can never make an invoice negative.** `concessionFor()` clamps to the amount owed, so a ₹5,000
+  discount against ₹1,200 of fees bills ₹0 rather than a credit. There is no refund or credit-note
+  concept in this system, by design.
+- **Changing it does not touch invoices already issued.** Each invoice stores the discount it was
+  billed with as `concessionRupees`, so the new amount applies from the next run onward.
+- The invoice, the printed slip, the receipt and the WhatsApp reminder all show it as a
+  **`Concession`** row, since that is the word parents see on a fee slip.
+- A **percentage** concession is supported by the calculation (`concessionFor()` handles `PERCENT`,
+  and a fractional percentage like 12.5% is valid) but has no field on the form. Set one with a
+  `PATCH /api/v1/students/:studentId` if a percentage is ever needed; the form will report it in a
+  hint and replace it with a flat amount if that field is edited.
+
+**A charge is never negative.** Reaching for a negative amount under *Dues and other charges* is the
+obvious way to try to record a discount, and it is rejected at every layer — the zod schema, the
+Mongoose model and the invoice's own `min: 0` line items. Use the discount field instead.
 
 ## Operations
 
@@ -913,9 +941,13 @@ Three consequences fall out of that, all tested:
 
 ### The student page shows all three states
 
+Transport and the discount each show a row even when there is nothing to bill — "Not opted",
+"None". A hidden row is indistinguishable from one that has not loaded, and whether a child rides
+the bus or holds a discount is exactly what this section exists to answer.
+
 | Group | What it is |
 |---|---|
-| **Every month** | Recurring extras from the fee structure — transport. Already inside each monthly invoice, so not added to the outstanding total |
+| **Every month** | Recurring extras from the fee structure — transport — and the student's standing discount, shown green as a `−` amount. Already inside each monthly invoice, so not added to the outstanding total |
 | **Waiting for the next invoice** | Charges entered but not yet billed, with a running total, each removable |
 | **Already billed** | Charges a monthly invoice absorbed, linked to that invoice |
 

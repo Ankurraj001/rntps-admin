@@ -138,6 +138,27 @@ describe('the concession applies last, to the summed total', () => {
     // Gross uses the student's ₹1,000 fare, not the class's ₹500.
     expect(row).toMatchObject({ grossRupees: 2_000, concessionRupees: 1_000, totalRupees: 1_000 });
   });
+
+  it('takes the same flat amount off every month, not just the first', async () => {
+    const id = await newStudent({
+      fullName: 'Flat Discount',
+      transportOpted: false,
+      concession: { type: 'FLAT', value: 200, reason: 'Hardship' },
+    });
+
+    // A discount recorded against the student is a standing reduction, so it has to
+    // survive into the next run rather than being spent on the month it was entered.
+    for (const period of [PERIOD, '2026-09']) {
+      await as.post('/api/v1/fees/runs/commit').send({ period }).expect(200);
+
+      const invoice = await as.get(`/api/v1/fees/invoices/${id}:${period}`).expect(200);
+      expect(invoice.body).toMatchObject({
+        grossRupees: 1_000,
+        concessionRupees: 200,
+        totalRupees: 800,
+      });
+    }
+  });
 });
 
 describe('the committed invoice matches the preview exactly', () => {

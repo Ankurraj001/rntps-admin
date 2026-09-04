@@ -86,6 +86,10 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
 
   const selectedClass = form.watch('classCode');
   const usesTransport = form.watch('transportOpted') === true;
+  // A percentage concession is only reachable through the API — this form writes FLAT or
+  // NONE. Surfaced in the discount hint rather than silently misread as rupees.
+  const concessionType = form.watch('concession.type');
+  const concessionValue = form.watch('concession.value');
 
   // Fee structures are admin-only, and so is this form, so this is a safe extra query.
   // It exists purely so the fare field can say what it is overriding.
@@ -476,6 +480,38 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
                   // zero is a real fare for a child who travels free.
                   setValueAs: (value) =>
                     value === '' || value === null ? null : Math.trunc(Number(value)),
+                })}
+              />
+            </Field>
+
+            <Field
+              label="Discount (₹)"
+              htmlFor="discount"
+              error={errors.concession?.value?.message}
+              hint={
+                concessionType === 'PERCENT'
+                  ? `Currently a ${concessionValue}% concession set outside this form — saving replaces it with a flat monthly amount`
+                  : 'Reduced from every monthly invoice. Comes off the class fee lines, not one-off charges. Blank means no discount.'
+              }
+            >
+              <Input
+                id="discount"
+                type="number"
+                min={0}
+                step="1"
+                placeholder="0"
+                {...form.register('concession.value', {
+                  // Clamped, not rejected: a discount is never negative, so a typed minus
+                  // sign reads as "no discount" rather than raising a zod range error.
+                  setValueAs: (value) =>
+                    value === '' || value === null ? 0 : Math.max(0, Math.trunc(Number(value))),
+                  // One field, two stored properties. Synced here rather than in an
+                  // effect, which would land a render late and let the resolver see NONE
+                  // paired with a non-zero value — something concessionSchema rejects.
+                  onChange: (event) => {
+                    const amount = Math.trunc(Number(event.target.value || 0));
+                    form.setValue('concession.type', amount > 0 ? 'FLAT' : 'NONE');
+                  },
                 })}
               />
             </Field>

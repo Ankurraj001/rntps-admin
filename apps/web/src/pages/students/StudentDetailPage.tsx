@@ -195,7 +195,7 @@ function ProfileTab({
               }
             />
             <Detail
-              label="Concession"
+              label="Discount"
               value={
                 student.concession.type === 'NONE'
                   ? 'None'
@@ -339,9 +339,17 @@ function DuesCard({
   });
 
   const typed = Number(amount || 0);
-  // Refused rather than truncated, as everywhere else money is entered.
+  // Refused rather than truncated, as everywhere else money is entered. A non-positive
+  // amount says so rather than only disabling the button: reaching for a negative charge
+  // is the obvious way to try to record a discount, so point at where that actually lives.
   const amountError =
-    amount !== '' && !Number.isInteger(typed) ? 'Enter a whole number of rupees' : undefined;
+    amount === ''
+      ? undefined
+      : !Number.isInteger(typed)
+        ? 'Enter a whole number of rupees'
+        : typed <= 0
+          ? 'A charge is always positive — use the Discount field on the student form to reduce fees'
+          : undefined;
   const ready = name.trim().length >= 2 && typed > 0 && !amountError;
 
   const refresh = async () => {
@@ -396,7 +404,12 @@ function DuesCard({
                 <span className={cn('font-medium', row.none && 'text-slate-500')}>{row.label}</span>
                 {row.tag && <span className="ml-2 text-xs text-slate-500">{row.tag}</span>}
               </span>
-              <span className={cn('tabular-nums', row.none ? 'text-slate-400' : 'text-slate-600')}>
+              <span
+                className={cn(
+                  'tabular-nums',
+                  row.none ? 'text-slate-400' : row.credit ? 'text-emerald-700' : 'text-slate-600',
+                )}
+              >
                 {row.value}
               </span>
             </div>
@@ -666,12 +679,14 @@ type MonthlyExtra = {
   value: string;
   /** True when nothing is actually charged, so the row renders muted. */
   none?: boolean;
+  /** True when the amount comes off the bill, so it renders green like a concession. */
+  credit?: boolean;
   /** A situation that needs explaining rather than just stating. */
   note?: string;
 };
 
 /**
- * Everything billed to this student every month beyond what the whole class pays.
+ * The transport rows.
  *
  * Transport always produces a row, even when the student has not opted in. A hidden row
  * is indistinguishable from a row that has not loaded, and "does this child use the bus?"
@@ -680,7 +695,7 @@ type MonthlyExtra = {
  * Amounts come from the same `buildLineItems()` the invoice run uses, so what is shown
  * here cannot drift from what is billed.
  */
-function monthlyExtrasFor(
+function transportExtrasFor(
   student: import('@rntps/shared').StudentDto,
   structure: import('@rntps/shared').FeeStructureDto | undefined,
   structuresPending: boolean,
@@ -759,6 +774,72 @@ function monthlyExtrasFor(
   }
 
   return rows;
+}
+
+/**
+ * The standing discount row.
+ *
+ * Shown even when there is none, for the same reason transport is: "does this child get a
+ * discount?" is a question this section should answer outright rather than by omission.
+ */
+function discountExtraFor(
+  student: import('@rntps/shared').StudentDto,
+  structure: import('@rntps/shared').FeeStructureDto | undefined,
+  structuresPending: boolean,
+): MonthlyExtra {
+  const { type, value, reason } = student.concession;
+
+  if (type === 'NONE' || value <= 0) {
+    return { key: 'discount', label: 'Discount', value: 'None', none: true };
+  }
+
+  // A percentage is not settable from the student form, and its rupee value moves with
+  // the fee lines, so state the rate rather than a figure that could mislead.
+  if (type === 'PERCENT') {
+    return {
+      key: 'discount',
+      label: 'Discount',
+      tag: reason || undefined,
+      value: `${value}% / month`,
+      credit: true,
+    };
+  }
+
+  // The discount is clamped to the fees it comes off, so a flat amount larger than the
+  // monthly fee lines is quietly capped. Say so rather than promising a bigger reduction.
+  const feeLines = structuresPending || !structure ? null : buildLineItems(structure.heads, student).lineItems;
+  const billable = feeLines === null ? null : feeLines.reduce((sum, line) => sum + line.amountRupees, 0);
+
+  return {
+    key: 'discount',
+    label: 'Discount',
+    tag: reason || undefined,
+    value: `−${formatINR(value)} / month`,
+    credit: true,
+    note:
+      billable !== null && value > billable
+        ? `Only ${formatINR(billable)} is taken off, since that is all this student is billed in fees each month. A discount never becomes a credit.`
+        : undefined,
+  };
+}
+
+/**
+ * Everything billed to this student every month beyond what the whole class pays, and
+ * anything that comes off it.
+ *
+ * Composed rather than built in one pass because the transport rows return early in
+ * several states — not opted in, no structure, no fare — and the discount has to show up
+ * in every one of them.
+ */
+function monthlyExtrasFor(
+  student: import('@rntps/shared').StudentDto,
+  structure: import('@rntps/shared').FeeStructureDto | undefined,
+  structuresPending: boolean,
+): MonthlyExtra[] {
+  return [
+    ...transportExtrasFor(student, structure, structuresPending),
+    discountExtraFor(student, structure, structuresPending),
+  ];
 }
 
 /** Sentinel for "don't filter" in the session picker — no academic year can collide with it. */
