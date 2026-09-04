@@ -89,6 +89,8 @@ counters are never reset.
 | `npm run seed:admin -- "Name" email@school` | Creates an admin and prints a one-time password |
 | `npm run reset:password -- email@school` | Break-glass password reset when nobody can sign in |
 | `npm run mail:test -- you@example.com` | Verifies the mail transport before anyone relies on it |
+| `npm run report:daily -- [YYYY-MM-DD]` | Sends the daily collection email by hand; defaults to today |
+| `npm run report:expenses -- [YYYY-MM]` | Sends the monthly expense email by hand; defaults to this month |
 | `npm run test:e2e` | Playwright end-to-end tests against a running stack |
 | `npm run indexes:sync` | Builds the schema indexes — **required deploy step**, see below |
 | `npm run migrate:rupees --workspace @rntps/api` | One-off paise → rupees conversion; `--dry-run` reports without writing |
@@ -149,7 +151,7 @@ which doubles as the uniqueness constraint:
 | `attendance` *(phase 3)* | `{studentId}:{dateKey}` | `RNTPS-26-001:2026-08-25` |
 | `feeStructures` *(phase 4)* | `{classCode}:{year}` | `5:2026-27` |
 | `settings` | fixed literal | `app` |
-| `users` *(phase 2)*, `notifications`, `auditLogs` | ObjectId | — |
+| `users` *(phase 2)*, `notifications`, `auditLogs`, `expenses` | ObjectId | — |
 
 Keying an invoice by student-and-period makes double-billing structurally impossible; keying
 attendance by student-and-day does the same for double-marking. Neither needs an application check.
@@ -423,6 +425,10 @@ A/T   GET    /reports/dashboard                   also carries the school name +
 A     GET    /reports/dues?format=csv
 A     GET    /reports/collection?from&to&format=csv
 
+A     GET    /expenses?month=YYYY-MM              the whole Expenses tab in one response
+A     POST   /expenses
+A     DELETE /expenses/:id                        the one hard delete; audited with its values
+
 A     GET    /settings                            admin-only: exposes the ID prefix and counters
 A     PATCH  /settings
 ```
@@ -557,9 +563,88 @@ Rolling over does not disturb history: invoices snapshot the student's name and 
 3. **Fee reminders** → build a batch → work through the queue.
 4. **Reports → Collection** at month end; reconcile against the bank.
 
+### Monthly (expenses)
+
+**Reports → Expenses** is where money going *out* is recorded — salaries, fuel, bills. Pick a month,
+type a name and an amount, press Add. Each row saves immediately, so the cards above it are never
+out of step with the list below.
+
+Four figures for the chosen month: collected (with what was invoiced), total expenses, profit or
+loss, and current outstanding. Under them, a running profit/loss **from the first month an expense
+was ever recorded** — scoped that way because fee collection goes back to the school's first invoice
+while expenses only start when someone starts typing them, and comparing the two over all time would
+report a profit made entirely of the months nobody was recording.
+
+Two things to know:
+
+- **Outstanding is as of today**, not as of the month on screen. It is the same all-time balance the
+  dashboard shows; there is no historical version of it.
+- **Removing an expense deletes it.** This is the one place in the system that destroys a money
+  record rather than voiding or reversing it — an expense has no receipt in a parent's hands and
+  nothing points at it. The deleted name, amount and month are written to `auditLogs`, which is the
+  only trace that survives.
+
+**The month-end email.** On the last day of each month at **18:00 IST**, a scheduled function mails
+that month's expenses — the table, the total, and how it sat against the month's collection — to the
+same `DAILY_REPORT_TO` list as the daily collection email. It sends on a month with no expenses too,
+saying so, for the same reason the daily one does: an empty inbox cannot be told apart from a dead
+job.
+
+Cron cannot express "the last day of the month", so the function is scheduled on days **28–31**
+(`30 12 28-31 * *`) and returns without sending on the firings that are not month-end. That check is
+what keeps February to one email and January to one rather than four, so it is covered by tests
+rather than left to be noticed in production.
+
+Anything entered after 18:00 on the last day is in the app but missed that email. **Email this
+month** on the Expenses tab re-sends the selected month on demand, exactly as it stands at that
+moment, to the same list — so a late entry does not mean waiting for next month. From a terminal,
+`npm run report:expenses -- 2026-09` does the same thing.
+
+That button posts to `/expenses/email`, which takes its recipients from `DAILY_REPORT_TO` and
+deliberately offers no way to name them in the request: an endpoint that mailed wherever the caller
+asked would be an open relay sitting behind an admin login.
+
+If the month-end cut-off turns out to be a nuisance, moving the schedule to the 1st of the following
+month (`30 12 1 * *`, reporting the previous month) closes the gap entirely.
+
 ### Daily (attendance)
 
 Teachers mark their own classes. The dashboard flags any class not yet marked.
+
+### Daily (fee-collection email)
+
+The one thing in this system that runs unattended. Every day at **7:00 pm IST** a Netlify Scheduled
+Function (`netlify/functions/daily-report.mjs`, schedule in `netlify.toml`) emails the day's
+collection as a table — receipt, student, class, mode, amount, and a total — to whoever
+`DAILY_REPORT_TO` names. Set that variable in Netlify; until it is set the job runs and deliberately
+sends nothing, which is also how you switch it off.
+
+**More than one recipient**: comma-separate them, as with `CORS_ORIGINS`. Whitespace is trimmed.
+
+```
+DAILY_REPORT_TO=office@school.in, accountant@school.in
+```
+
+Everyone named goes on **one** email and can see the others in the To header — right for an internal
+report, and the reason this is not the mechanism to use for anything addressed to a parent. One send
+also keeps the job to a single message against the transport's daily cap.
+
+**It sends on a quiet day too**, saying zero. A missing email cannot be told apart from a job that
+died three weeks ago, so the email arriving at all is the evidence the schedule is alive.
+
+Two things worth knowing:
+
+- It covers payments **dated** that day (`paidAt`), which is how the dashboard and Reports → Collection
+  already count a day. Because `paidAt` is backdatable and the email goes at 7pm, a payment entered
+  later — or backdated to an earlier day — appears in no digest at all. The email says so in a footer
+  and points at Reports → Collection, which remains the record; `npm run report:daily -- 2026-09-04`
+  re-sends any day.
+- Netlify evaluates cron in **UTC** (`30 13 * * *` = 19:00 IST; India has no DST). Scheduled functions
+  fire only on **published production deploys**, so a Deploy Preview cannot mail the recipient. Use
+  **Run now** in the Netlify UI to fire one on demand.
+
+Locally the schedule cannot run at all — use `npm run report:daily`. With no mail transport configured
+the body is logged instead of sent, so the table can be read without credentials.
 
 ### Backups
 

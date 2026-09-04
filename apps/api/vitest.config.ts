@@ -20,6 +20,9 @@ export default defineConfig({
       SMTP_HOST: '',
       SMTP_USER: '',
       SMTP_PASS: '',
+      // Same reasoning: a developer with a real recipient in their .env would otherwise
+      // break the daily-report tests that assert the "no recipient configured" path.
+      DAILY_REPORT_TO: '',
     },
     globals: true,
     globalSetup: ['./src/test/globalSetup.ts'],

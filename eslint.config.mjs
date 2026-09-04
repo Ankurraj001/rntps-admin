@@ -19,4 +19,10 @@ export default tseslint.config(
     files: ['**/*.test.ts', '**/*.test.tsx'],
     rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
   },
+  {
+    // Netlify's modern function format hands the handler web platform globals, which are
+    // real at runtime but invisible to the default ES environment.
+    files: ['netlify/functions/**/*.mjs'],
+    languageOptions: { globals: { Request: 'readonly', Response: 'readonly' } },
+  },
 );

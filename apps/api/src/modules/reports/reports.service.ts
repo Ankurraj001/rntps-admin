@@ -226,6 +226,21 @@ export interface DashboardSummary {
 }
 
 /** Everything the dashboard needs, in one round trip. */
+/**
+ * What a month was billed, excluding voided invoices.
+ *
+ * Extracted rather than inlined because the Expenses tab needs the same figure for an
+ * arbitrary month: two copies of this pipeline would be two definitions of "invoiced",
+ * free to drift apart the first time one of them learns about a new status.
+ */
+export async function invoicedInPeriod(period: string): Promise<number> {
+  const rows = await Invoice.aggregate<{ total: number }>([
+    { $match: { period, status: { $ne: 'VOID' } } },
+    { $group: { _id: null, total: { $sum: '$totalRupees' } } },
+  ]);
+  return rows[0]?.total ?? 0;
+}
+
 export async function getDashboard(): Promise<DashboardSummary> {
   const today = toDateKey();
   const period = today.slice(0, 7);
@@ -242,10 +257,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
       Student.distinct('classCode', { status: 'ACTIVE' }) as Promise<string[]>,
       getDuesReport({}),
       getCollectionReport(from, to),
-      Invoice.aggregate<{ total: number }>([
-        { $match: { period, status: { $ne: 'VOID' } } },
-        { $group: { _id: null, total: { $sum: '$totalRupees' } } },
-      ]),
+      invoicedInPeriod(period),
       Student.countDocuments({
         status: 'ACTIVE',
         $or: [
@@ -273,7 +285,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
     month: {
       period,
       collectedRupees: collection.totals.amountRupees,
-      invoicedRupees: invoicedThisMonth[0]?.total ?? 0,
+      invoicedRupees: invoicedThisMonth,
     },
     outstanding: {
       balanceRupees: dues.totals.balanceRupees,

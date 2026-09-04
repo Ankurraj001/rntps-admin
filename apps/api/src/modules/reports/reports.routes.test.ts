@@ -1,3 +1,4 @@
+import { toDateKey } from '@rntps/shared';
 import type { Express } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -280,7 +281,9 @@ describe('GET /reports/dashboard', () => {
       .set('Authorization', adminHeader)
       .send({
         classCode: '5',
-        dateKey: new Date().toISOString().slice(0, 10),
+        // IST, not UTC. The dashboard's "today" is toDateKey(), so a UTC date makes this
+        // test fail between 00:00 and 05:30 IST, when the two calendars disagree.
+        dateKey: toDateKey(),
         marks: [{ studentId: student.studentId, status: 'PRESENT' }],
       })
       .expect(200);

@@ -7,6 +7,7 @@ export * from './schemas/student.js';
 export * from './schemas/settings.js';
 export * from './schemas/auth.js';
 export * from './schemas/attendance.js';
+export * from './schemas/expenses.js';
 export * from './schemas/fees.js';
 export * from './schemas/notifications.js';
 export * from './schemas/passwordReset.js';

@@ -26,6 +26,8 @@
     "reset:password": "npm run reset:password -w @rntps/api --",
     "test:e2e": "npm run test:e2e -w @rntps/web",
     "mail:test": "npm run mail:test -w @rntps/api --",
+    "report:daily": "npm run report:daily -w @rntps/api --",
+    "report:expenses": "npm run report:expenses -w @rntps/api --",
     "migrate:drop-plaintext": "npm run migrate:drop-plaintext -w @rntps/api --",
     "backfill:tuition": "npm run backfill:tuition -w @rntps/api --"
   },

@@ -35,6 +35,25 @@
   # it from node_modules instead of bundling avoids "module not found" at cold start.
   external_node_modules = ["mongoose"]
 
+# The daily fee-collection email. Netlify evaluates cron in UTC and India does not observe
+# daylight saving, so 13:30 UTC is 19:00 IST every day of the year with no seasonal drift.
+#
+# Declared here rather than as an `export const config` inside the function: this form is
+# documented as working for any function shape, and the schedule belongs with the rest of
+# the deploy configuration. Scheduled functions only fire on published production deploys,
+# so a Deploy Preview cannot mail the real recipient.
+[functions."daily-report"]
+  schedule = "30 13 * * *"
+
+# The month-end expense report, 18:00 IST = 12:30 UTC.
+#
+# Days 28-31 rather than a single date, because cron cannot express "the last day of the
+# month" — the shortest month has 28 days and the longest 31. The function checks whether
+# today is actually month-end in IST and returns without sending on the other firings, so
+# February mails once and January is not mailed four times.
+[functions."monthly-expenses"]
+  schedule = "30 12 28-31 * *"
+
 # API first — a rewrite, so the browser URL stays on the same origin.
 [[redirects]]
   from = "/api/*"

@@ -9,7 +9,13 @@ import {
 import { logger } from '../config/logger.js';
 
 export interface Mail {
-  to: string;
+  /**
+   * One address, or several on the same email. Both transports take a list as it stands —
+   * nodemailer and Resend each accept a string or an array — so this needs no branching.
+   * Everyone named here appears in the To header and can see the others, which is the
+   * point for an internal report and would be wrong for anything addressed to a parent.
+   */
+  to: string | string[];
   subject: string;
   text: string;
   html: string;
@@ -124,8 +130,9 @@ export async function sendMail(mail: Mail): Promise<SendResult> {
     logger.error({ subject: mail.subject }, 'no mail transport configured — email not sent');
   } else {
     // The body carries the reset link, which is exactly what a developer needs.
+    const to = Array.isArray(mail.to) ? mail.to.join(', ') : mail.to;
     logger.info(
-      `\n--- email (no mail transport configured) ---\nto: ${mail.to}\nsubject: ${mail.subject}\n\n${mail.text}\n---\n`,
+      `\n--- email (no mail transport configured) ---\nto: ${to}\nsubject: ${mail.subject}\n\n${mail.text}\n---\n`,
     );
   }
   return { sent: false, error: 'no mail transport configured' };

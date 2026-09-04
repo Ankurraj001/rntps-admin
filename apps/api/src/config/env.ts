@@ -71,6 +71,29 @@ const baseEnvSchema = z.object({
 
   /** Invitations are handed out ahead of time, so they outlive a self-service reset. */
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(72),
+
+  /**
+   * Who receives the 7pm IST daily collection report. Comma-separated for more than one,
+   * like CORS_ORIGINS above — the office and the accountant usually both want it, and a
+   * second address should not require a code change.
+   *
+   * Empty means the job still runs on schedule and declines to send, which is what a fresh
+   * checkout should do: nobody has chosen an address yet, and that is not a misconfiguration.
+   *
+   * No real default and no `.email()`, both on purpose. An address written here would be
+   * matched by Netlify's secrets scanner against the build output and fail the deploy. And
+   * a validation refinement would turn a typo in a *reporting* address into a boot failure
+   * that takes the entire API down — far past what this feature is worth.
+   */
+  DAILY_REPORT_TO: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((address) => address.trim())
+        .filter(Boolean),
+    ),
 });
 
 /**

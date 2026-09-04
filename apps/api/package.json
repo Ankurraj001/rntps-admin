@@ -16,6 +16,8 @@
     "seed:admin": "tsx src/scripts/seedAdmin.ts",
     "reset:password": "tsx src/scripts/resetPassword.ts",
     "mail:test": "tsx src/scripts/testMail.ts",
+    "report:daily": "tsx src/scripts/sendDailyReport.ts",
+    "report:expenses": "tsx src/scripts/sendMonthlyExpenses.ts",
     "tokens:clear-expired": "tsx src/scripts/clearExpiredResetTokens.ts",
     "migrate:drop-plaintext": "tsx src/scripts/dropPlaintextPasswords.ts",
     "migrate:rupees": "tsx src/scripts/migratePaiseToRupees.ts",

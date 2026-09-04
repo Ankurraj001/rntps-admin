@@ -9,6 +9,7 @@ import { requestId } from './middleware/requestId.js';
 import { rejectMongoOperators } from './middleware/validate.js';
 import { attendanceRoutes } from './modules/attendance/attendance.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
+import { expenseRoutes } from './modules/expenses/expenses.routes.js';
 import { feesRoutes } from './modules/fees/fees.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { notificationRoutes } from './modules/notifications/notifications.routes.js';
@@ -63,6 +64,7 @@ export function createApp(): Express {
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/users', userRoutes);
   app.use('/api/v1/attendance', attendanceRoutes);
+  app.use('/api/v1/expenses', expenseRoutes);
   app.use('/api/v1/fees', feesRoutes);
   app.use('/api/v1/notifications', notificationRoutes);
   app.use('/api/v1/reports', reportRoutes);
