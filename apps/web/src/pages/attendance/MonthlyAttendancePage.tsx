@@ -1,10 +1,12 @@
 import {
   ATTENDANCE_SHORT,
   CLASS_CODES,
-  classLabel,
+  TEACHERS_SCOPE,
+  attendanceScopeLabel,
   toDateKey,
   type AttendanceStatus,
 } from '@rntps/shared';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
@@ -26,19 +28,61 @@ const CELL_TONE: Record<AttendanceStatus, string> = {
 export function MonthlyAttendancePage() {
   const me = useCurrentUser();
   const myClasses = me.role === 'ADMIN' ? [...CLASS_CODES] : me.assignedClasses;
+  // The teacher register is read-only here, so everyone may see it. Appended last so it
+  // never displaces a class as the default.
+  const scopes = [...myClasses, TEACHERS_SCOPE];
 
-  const [classCode, setClassCode] = useState(myClasses[0] ?? '1');
+  // Falling back to '1' would hand a teacher with no assigned classes a guaranteed 403.
+  const [classCode, setClassCode] = useState(myClasses[0] ?? TEACHERS_SCOPE);
   const [month, setMonth] = useState(toDateKey().slice(0, 7));
+  const isStaff = classCode === TEACHERS_SCOPE;
 
   const monthly = useQuery({
     queryKey: attendanceKeys.monthly(classCode, month),
     queryFn: () => attendanceApi.monthly(classCode, month),
-    enabled: myClasses.includes(classCode as never),
+    enabled: !isStaff && myClasses.includes(classCode as never),
   });
+
+  const staffMonthly = useQuery({
+    queryKey: attendanceKeys.staffMonthly(month),
+    queryFn: () => attendanceApi.staffMonthly(month),
+    enabled: isStaff,
+  });
+
+  /**
+   * The grid on screen, whichever register it came from. Always the *enabled* query: a
+   * disabled one stays `isPending` forever and would leave this permanently loading.
+   *
+   * `month`, `dateKeys` and `holidays` are field-compatible between the two responses by
+   * design, so only the rows need adapting.
+   */
+  const active = isStaff ? staffMonthly : monthly;
+  const view = active.data;
+  const rows = useMemo(
+    () =>
+      isStaff
+        ? (staffMonthly.data?.rows ?? []).map((row) => ({
+            id: row.userId,
+            name: row.name,
+            rollNo: null as number | null,
+            href: null as string | null,
+            days: row.days,
+            totals: row.totals,
+          }))
+        : (monthly.data?.rows ?? []).map((row) => ({
+            id: row.studentId,
+            name: row.fullName,
+            rollNo: row.rollNo,
+            href: `/students/${row.studentId}`,
+            days: row.days,
+            totals: row.totals,
+          })),
+    [isStaff, staffMonthly.data, monthly.data],
+  );
 
   return (
     <>
-      <PageHeader title="Monthly attendance" description="One row per student, one column per day." />
+      <PageHeader title="Monthly attendance" description="One row per person, one column per day." />
 
       <div className="space-y-4 p-6">
         <Card>
@@ -46,9 +90,9 @@ export function MonthlyAttendancePage() {
             <label className="text-sm">
               <span className="mb-1.5 block font-medium text-slate-700">Class</span>
               <Select className="w-40" value={classCode} onChange={(e) => setClassCode(e.target.value)}>
-                {myClasses.map((code) => (
+                {scopes.map((code) => (
                   <option key={code} value={code}>
-                    {classLabel(code)}
+                    {attendanceScopeLabel(code)}
                   </option>
                 ))}
               </Select>
@@ -63,26 +107,28 @@ export function MonthlyAttendancePage() {
           </div>
         </Card>
 
-        {monthly.error && <ErrorBlock message={(monthly.error as Error).message} />}
+        {active.error && <ErrorBlock message={(active.error as Error).message} />}
 
         <Card>
-          {monthly.isPending && <LoadingBlock />}
+          {active.isPending && <LoadingBlock />}
 
-          {monthly.data && monthly.data.rows.length === 0 && (
-            <EmptyState title={`No active students in ${classLabel(classCode)}`} />
+          {view && rows.length === 0 && (
+            <EmptyState
+              title={isStaff ? 'No active teachers' : `No active students in ${attendanceScopeLabel(classCode)}`}
+            />
           )}
 
-          {monthly.data && monthly.data.rows.length > 0 && (
+          {view && rows.length > 0 && (
             <div className="overflow-x-auto">
               <table className="text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
                   <tr>
                     <th scope="col" className="sticky left-0 z-10 bg-slate-50 px-4 py-2 text-left font-medium">
-                      Student
+                      {isStaff ? 'Teacher' : 'Student'}
                     </th>
-                    {monthly.data.dateKeys.map((dateKey) => {
+                    {view.dateKeys.map((dateKey) => {
                       const day = dateKey.slice(8);
-                      const holiday = monthly.data.holidays[dateKey];
+                      const holiday = view.holidays[dateKey];
                       return (
                         <th
                           key={dateKey}
@@ -98,18 +144,23 @@ export function MonthlyAttendancePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {monthly.data.rows.map((row) => (
-                    <tr key={row.studentId} className="hover:bg-slate-50">
+                  {rows.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50">
                       <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-4 py-2">
-                        <Link
-                          to={`/students/${row.studentId}`}
-                          className="font-medium text-slate-900 hover:text-brand-700 hover:underline"
-                        >
-                          {row.rollNo !== null && <span className="mr-1.5 text-slate-400">{row.rollNo}</span>}
-                          {row.fullName}
-                        </Link>
+                        {/* A teacher has no detail page to link to. */}
+                        {row.href ? (
+                          <Link
+                            to={row.href}
+                            className="font-medium text-slate-900 hover:text-brand-700 hover:underline"
+                          >
+                            {row.rollNo !== null && <span className="mr-1.5 text-slate-400">{row.rollNo}</span>}
+                            {row.name}
+                          </Link>
+                        ) : (
+                          <span className="font-medium text-slate-900">{row.name}</span>
+                        )}
                       </td>
-                      {monthly.data.dateKeys.map((dateKey) => {
+                      {view.dateKeys.map((dateKey) => {
                         const status = row.days[dateKey] as AttendanceStatus | undefined;
                         return (
                           <td

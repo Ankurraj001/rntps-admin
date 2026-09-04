@@ -11,6 +11,7 @@ import '../models/FeeStructure.js';
 import '../models/Invoice.js';
 import '../models/Notification.js';
 import '../models/Settings.js';
+import '../models/StaffAttendance.js';
 import '../models/Student.js';
 import '../models/User.js';
 

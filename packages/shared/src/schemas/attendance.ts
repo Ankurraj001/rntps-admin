@@ -33,12 +33,52 @@ export const attendanceSummaryQuerySchema = z.object({
   threshold: z.coerce.number().min(0).max(100).default(75),
 });
 
+/**
+ * Teacher attendance.
+ *
+ * The same three states and the same Sunday/holiday rules as a class roster, but keyed on a
+ * user id rather than a studentId and with no classCode at all — teachers do not belong to a
+ * class. It is stored in its own collection so school-wide student figures cannot absorb it.
+ */
+export const staffRosterQuerySchema = z.object({
+  dateKey: dateKeyField,
+});
+
+export const staffMarkSchema = z.object({
+  /**
+   * A User `_id` as 24 hex characters.
+   *
+   * Normalised *down*, unlike `markSchema.studentId`'s `.toUpperCase()`: the stored `_id` is
+   * `{userId}:{dateKey}`, so the same teacher-day arriving in two different cases would upsert
+   * two documents and destroy the uniqueness the whole `_id` design rests on. The shape is
+   * checked here so a non-id is rejected at the edge rather than cast by Mongo.
+   */
+  userId: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[0-9a-f]{24}$/, 'Not a valid user'),
+  status: z.enum(ATTENDANCE_STATUSES),
+  remarks: z.string().trim().max(200).default(''),
+});
+
+export const saveStaffRosterSchema = z.object({
+  dateKey: dateKeyField,
+  marks: z.array(staffMarkSchema).min(1, 'Nothing to save').max(100),
+});
+
+export const staffMonthlyQuerySchema = z.object({
+  month: z.string().regex(PERIOD_PATTERN, 'Use the form 2026-08'),
+});
+
 export const studentAttendanceQuerySchema = z.object({
   from: z.string().regex(DATE_KEY_PATTERN).optional(),
   to: z.string().regex(DATE_KEY_PATTERN).optional(),
 });
 
 export type SaveRosterPayload = z.output<typeof saveRosterSchema>;
+export type SaveStaffRosterPayload = z.output<typeof saveStaffRosterSchema>;
+export type StaffMonthlyQuery = z.output<typeof staffMonthlyQuerySchema>;
 export type RosterQuery = z.output<typeof rosterQuerySchema>;
 export type MonthlyQuery = z.output<typeof monthlyQuerySchema>;
 export type AttendanceSummaryQuery = z.output<typeof attendanceSummaryQuerySchema>;
@@ -90,6 +130,39 @@ export interface MonthlyResponse {
   dateKeys: string[];
   holidays: Record<string, string>;
   rows: MonthlyRow[];
+}
+
+/** A teacher's row on the daily roster. Mirrors RosterEntry, minus the roll number. */
+export interface StaffRosterEntry {
+  userId: string;
+  name: string;
+  status: (typeof ATTENDANCE_STATUSES)[number] | null;
+  remarks: string;
+}
+
+export interface StaffRosterResponse {
+  dateKey: string;
+  holiday: { dateKey: string; label: string } | null;
+  isSunday: boolean;
+  isFuture: boolean;
+  submittedAt: string | null;
+  submittedBy: string | null;
+  entries: StaffRosterEntry[];
+}
+
+export interface StaffMonthlyRow {
+  userId: string;
+  name: string;
+  /** dateKey -> status, sparse: unmarked days are simply absent from the map. */
+  days: Record<string, string>;
+  totals: AttendanceTotals;
+}
+
+export interface StaffMonthlyResponse {
+  month: string;
+  dateKeys: string[];
+  holidays: Record<string, string>;
+  rows: StaffMonthlyRow[];
 }
 
 export interface AttendanceDefaulter {

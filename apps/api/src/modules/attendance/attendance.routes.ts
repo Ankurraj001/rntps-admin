@@ -3,6 +3,9 @@ import {
   monthlyQuerySchema,
   rosterQuerySchema,
   saveRosterSchema,
+  saveStaffRosterSchema,
+  staffMonthlyQuerySchema,
+  staffRosterQuerySchema,
   studentAttendanceQuerySchema,
 } from '@rntps/shared';
 import { Router } from 'express';
@@ -11,6 +14,7 @@ import { recordAudit } from '../../lib/audit.js';
 import { currentUser, requireAuth, requireClassAccess, requireRole } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import * as service from './attendance.service.js';
+import * as staff from './staff.service.js';
 
 export const attendanceRoutes = Router();
 
@@ -57,6 +61,58 @@ attendanceRoutes.get(
   asyncHandler(async (req, res) => {
     const { classCode, month } = validatedQuery(req, monthlyQuerySchema);
     res.json(await service.getMonthly(classCode, month));
+  }),
+);
+
+/**
+ * Teacher attendance.
+ *
+ * requireClassAccess() is deliberately absent from all three: there is no classCode in the
+ * params, query or body, so its extractor would find nothing and reject every teacher with
+ * "A class must be specified" while silently waving admins through — a failure that only
+ * shows up for non-admins.
+ */
+attendanceRoutes.get(
+  '/staff/roster',
+  requireRole('ADMIN'),
+  validate(staffRosterQuerySchema, 'query'),
+  asyncHandler(async (req, res) => {
+    const { dateKey } = validatedQuery(req, staffRosterQuerySchema);
+    res.json(await staff.getStaffRoster(dateKey));
+  }),
+);
+
+attendanceRoutes.put(
+  '/staff/roster',
+  requireRole('ADMIN'),
+  validate(saveStaffRosterSchema),
+  asyncHandler(async (req, res) => {
+    const payload = validatedBody(req, saveStaffRosterSchema);
+    const result = await staff.saveStaffRoster(payload, currentUser(req).id);
+
+    await recordAudit(req, {
+      action: 'staff-attendance.save',
+      entity: 'staffAttendance',
+      // No classCode exists here, so the day alone identifies the write.
+      entityId: payload.dateKey,
+      after: { dateKey: payload.dateKey, count: result.saved },
+    });
+
+    res.json(result);
+  }),
+);
+
+/**
+ * Readable by any signed-in user, which is what lets a teacher see the register they are on.
+ * Safe because the response carries only a user id and a name — never the email, phone or
+ * sign-in details that make GET /users admin-only.
+ */
+attendanceRoutes.get(
+  '/staff/monthly',
+  validate(staffMonthlyQuerySchema, 'query'),
+  asyncHandler(async (req, res) => {
+    const { month } = validatedQuery(req, staffMonthlyQuerySchema);
+    res.json(await staff.getStaffMonthly(month));
   }),
 );
 

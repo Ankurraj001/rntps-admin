@@ -30,6 +30,27 @@ export function classLabel(code: ClassCode | string): string {
 }
 
 /**
+ * The teacher roster, as selected in the attendance dropdown.
+ *
+ * Deliberately NOT a member of CLASS_CODES. Teachers are not a class, and that list is
+ * load-bearing well beyond attendance: `nextClassCode` below is index-based over it, so an
+ * extra member would promote class 8 into this instead of graduating it to alumni, and every
+ * `z.enum(CLASS_CODES)` — student records, fee structures, invoice runs — would start
+ * accepting it.
+ */
+export const TEACHERS_SCOPE = 'TEACHERS' as const;
+
+/**
+ * Label for whatever the attendance dropdown is on: a class, or the teacher roster.
+ *
+ * `classLabel` falls through to `Class ${code}` for anything it does not recognise, which
+ * would render the teacher roster as "Class TEACHERS".
+ */
+export function attendanceScopeLabel(scope: string): string {
+  return scope === TEACHERS_SCOPE ? 'Teachers' : classLabel(scope);
+}
+
+/**
  * Ordered promotion map used at year rollover. Class 8 is the terminal class —
  * those students become alumni rather than moving up.
  */

@@ -4,7 +4,8 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../app.js';
 import { Attendance } from '../../models/Attendance.js';
-import { adminAuth, seedSettings, studentInput } from '../../test/factories.js';
+import { StaffAttendance } from '../../models/StaffAttendance.js';
+import { adminAuth, createTestUser, seedSettings, studentInput } from '../../test/factories.js';
 import { createStudent } from '../students/student.service.js';
 import { getUnmarkedClasses } from './attendance.service.js';
 
@@ -19,6 +20,7 @@ import { getUnmarkedClasses } from './attendance.service.js';
 let app: Express;
 let adminHeader: string;
 let studentId: string;
+let teacherId: string;
 
 // August 2026 — the 2nd, 9th, 16th, 23rd and 30th are Sundays; the 3rd is a Monday.
 const SUNDAY = '2026-08-02';
@@ -35,6 +37,13 @@ beforeEach(async () => {
   adminHeader = (await adminAuth()).header;
   const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
   studentId = student.studentId;
+  const teacher = await createTestUser({
+    role: 'TEACHER',
+    name: 'Anita Rao',
+    email: 'anita@school.test',
+    assignedClasses: ['5'],
+  });
+  teacherId = String(teacher._id);
 });
 
 describe('the status list itself', () => {
@@ -145,6 +154,46 @@ describe('Sundays in the monthly grid', () => {
     const res = await as.get(`/api/v1/attendance/student/${studentId}`).expect(200);
     expect(res.body.records).toEqual([]);
     expect(res.body.totals).toMatchObject({ absent: 0, workingDays: 0 });
+  });
+});
+
+/**
+ * The rule covers the teacher register too, because both services call the same extracted
+ * helpers rather than each deriving Sunday for themselves.
+ */
+describe('the teacher register on a Sunday', () => {
+  it('reads as a holiday and cannot be marked', async () => {
+    const roster = await as.get(`/api/v1/attendance/staff/roster?dateKey=${SUNDAY}`).expect(200);
+    expect(roster.body.isSunday).toBe(true);
+    expect(roster.body.holiday).toMatchObject({ label: 'Sunday' });
+    expect(roster.body.entries[0]).toMatchObject({ status: 'HOLIDAY' });
+
+    const refused = await as
+      .put('/api/v1/attendance/staff/roster')
+      .send({ dateKey: SUNDAY, marks: [{ userId: teacherId, status: 'PRESENT' }] })
+      .expect(400);
+    expect(refused.body.error.message).toMatch(/Sunday/);
+
+    // Refused, rather than accepted and then ignored.
+    expect(await StaffAttendance.countDocuments()).toBe(0);
+  });
+
+  it('overrides a mark saved on a Sunday before the rule existed', async () => {
+    await StaffAttendance.create({
+      _id: `${teacherId}:${SUNDAY}`,
+      userId: teacherId,
+      dateKey: SUNDAY,
+      status: 'ABSENT',
+      remarks: '',
+      markedBy: 'legacy',
+      markedAt: new Date(),
+    });
+
+    const res = await as.get('/api/v1/attendance/staff/monthly?month=2026-08').expect(200);
+    const row = res.body.rows[0];
+
+    expect(row.days[SUNDAY]).toBe('HOLIDAY');
+    expect(row.totals).toMatchObject({ absent: 0, holiday: 5, workingDays: 0 });
   });
 });
 

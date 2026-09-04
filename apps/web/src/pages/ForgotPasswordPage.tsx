@@ -80,13 +80,12 @@ export function ForgotPasswordPage() {
                   </span>
                 </div>
                 <p className="text-sm text-slate-700">
-                  Ask an administrator to set a new password for you. They can do it from{' '}
-                  <strong>Settings → Users</strong>, and you will be asked to change it the first
-                  time you sign in.
+                  Ask an administrator to set a new password for you, and you will be asked to
+                  change it the first time you sign in.
                 </p>
                 <p className="text-xs text-slate-500">
-                  Administrators: <code>Settings → Users → Reset password</code>, or run{' '}
-                  <code>npm run reset:password -- your@email</code> on the server.
+                  Administrators: run <code>npm run reset:password -- your@email</code> on the
+                  server.
                 </p>
                 <Link to="/login" className="inline-block pt-1 text-sm text-brand-700 underline">
                   Back to sign in

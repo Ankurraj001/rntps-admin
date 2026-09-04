@@ -3,8 +3,9 @@ import {
   ATTENDANCE_SHORT,
   ATTENDANCE_STATUSES,
   CLASS_CODES,
+  TEACHERS_SCOPE,
   attendancePercentage,
-  classLabel,
+  attendanceScopeLabel,
   toDateKey,
   type AttendanceStatus,
 } from '@rntps/shared';
@@ -45,8 +46,12 @@ export function MarkAttendancePage() {
   const me = useCurrentUser();
   const queryClient = useQueryClient();
 
-  const myClasses = me.role === 'ADMIN' ? [...CLASS_CODES] : me.assignedClasses;
-  const [classCode, setClassCode] = useState(myClasses[0] ?? '1');
+  // Only an admin marks the teacher register, so only an admin is offered it. Appended
+  // last so it never displaces a class as the default selection.
+  const scopes =
+    me.role === 'ADMIN' ? [...CLASS_CODES, TEACHERS_SCOPE] : me.assignedClasses;
+  const [classCode, setClassCode] = useState(scopes[0] ?? '1');
+  const isStaff = classCode === TEACHERS_SCOPE;
   const [dateKey, setDateKey] = useState(toDateKey());
   const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
   const [focused, setFocused] = useState(0);
@@ -57,8 +62,40 @@ export function MarkAttendancePage() {
   const roster = useQuery({
     queryKey: attendanceKeys.roster(classCode, dateKey),
     queryFn: () => attendanceApi.roster(classCode, dateKey),
-    enabled: myClasses.includes(classCode as never),
+    enabled: !isStaff && scopes.includes(classCode as never),
   });
+
+  const staffRoster = useQuery({
+    queryKey: attendanceKeys.staffRoster(dateKey),
+    queryFn: () => attendanceApi.staffRoster(dateKey),
+    enabled: isStaff,
+  });
+
+  /**
+   * The register on screen, whichever roster it came from.
+   *
+   * Read the enabled query's flags, never the disabled one's: a disabled query stays
+   * `isPending` forever, so reading `roster.isPending` here would leave the teacher view
+   * showing "Loading roster…" permanently.
+   */
+  const active = isStaff ? staffRoster : roster;
+  const entries = useMemo(
+    () =>
+      isStaff
+        ? (staffRoster.data?.entries ?? []).map((entry) => ({
+            id: entry.userId,
+            name: entry.name,
+            rollNo: null as number | null,
+            status: entry.status,
+          }))
+        : (roster.data?.entries ?? []).map((entry) => ({
+            id: entry.studentId,
+            name: entry.fullName,
+            rollNo: entry.rollNo,
+            status: entry.status,
+          })),
+    [isStaff, staffRoster.data, roster.data],
+  );
 
   // Everyone defaults to Present: marking absences is the exception, so this is the
   // fastest starting point. Existing marks win.
@@ -66,34 +103,40 @@ export function MarkAttendancePage() {
   // Deliberately does NOT clear `saved`: a successful save invalidates this query, so
   // the refetch would land here and wipe the confirmation the admin needs to see.
   useEffect(() => {
-    if (!roster.data) return;
+    if (!active.data) return;
     const next: Record<string, AttendanceStatus> = {};
-    for (const entry of roster.data.entries) {
-      next[entry.studentId] = entry.status ?? 'PRESENT';
+    for (const entry of entries) {
+      next[entry.id] = entry.status ?? 'PRESENT';
     }
     setMarks(next);
-  }, [roster.data]);
+  }, [active.data, entries]);
 
-  // Switching class or date is a new roster, so the previous confirmation no longer applies.
+  // Switching register or date is a new roster, so the previous confirmation no longer
+  // applies. Marks go too: they are keyed by row, and the class and teacher registers do
+  // not share a key space, so carrying them over could submit one against the other.
   useEffect(() => {
+    setMarks({});
     setSaved(false);
     setFocused(0);
   }, [classCode, dateKey]);
 
   const save = useMutation({
     mutationFn: () =>
-      attendanceApi.saveRoster({
-        classCode,
-        dateKey,
-        marks: Object.entries(marks).map(([studentId, status]) => ({ studentId, status })),
-      }),
+      isStaff
+        ? attendanceApi.saveStaffRoster({
+            dateKey,
+            marks: Object.entries(marks).map(([userId, status]) => ({ userId, status })),
+          })
+        : attendanceApi.saveRoster({
+            classCode,
+            dateKey,
+            marks: Object.entries(marks).map(([studentId, status]) => ({ studentId, status })),
+          }),
     onSuccess: async () => {
       setSaved(true);
       await queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
     },
   });
-
-  const entries = roster.data?.entries ?? [];
 
   const counts = useMemo(() => {
     const tally = { PRESENT: 0, ABSENT: 0, HOLIDAY: 0 } as Record<AttendanceStatus, number>;
@@ -108,7 +151,7 @@ export function MarkAttendancePage() {
   }
 
   function markAll(status: AttendanceStatus) {
-    setMarks(Object.fromEntries(entries.map((entry) => [entry.studentId, status])));
+    setMarks(Object.fromEntries(entries.map((entry) => [entry.id, status])));
     setSaved(false);
   }
 
@@ -120,7 +163,7 @@ export function MarkAttendancePage() {
     const status = SHORTCUT[event.key.toLowerCase()];
     if (status) {
       event.preventDefault();
-      setStatus(entry.studentId, status);
+      setStatus(entry.id, status);
       const next = Math.min(index + 1, entries.length - 1);
       setFocused(next);
       rowRefs.current[next]?.focus();
@@ -136,8 +179,8 @@ export function MarkAttendancePage() {
   }
 
   // Sundays cannot be marked at all — the API refuses them, so the UI must not offer.
-  const isSundayRoster = roster.data?.isSunday ?? false;
-  const isReadOnly = (roster.data?.isFuture ?? false) || isSundayRoster;
+  const isSundayRoster = active.data?.isSunday ?? false;
+  const isReadOnly = (active.data?.isFuture ?? false) || isSundayRoster;
 
   return (
     <>
@@ -159,13 +202,17 @@ export function MarkAttendancePage() {
               `submittedAt` only arrives once the refetch lands and the button would
               otherwise stay disabled for that gap.
             */}
-            <WhatsAppAbsenteesButton
-              entries={entries}
-              marks={marks}
-              classCode={classCode}
-              dateKey={dateKey}
-              disabled={entries.length === 0 || isReadOnly || !(saved || roster.data?.submittedAt)}
-            />
+            {/* The absentee report goes to the school office about children, so it is
+                offered for a class only — not for the teacher register. */}
+            {!isStaff && (
+              <WhatsAppAbsenteesButton
+                entries={roster.data?.entries ?? []}
+                marks={marks}
+                classCode={classCode}
+                dateKey={dateKey}
+                disabled={entries.length === 0 || isReadOnly || !(saved || roster.data?.submittedAt)}
+              />
+            )}
           </div>
         }
       />
@@ -180,9 +227,9 @@ export function MarkAttendancePage() {
                 value={classCode}
                 onChange={(event) => setClassCode(event.target.value)}
               >
-                {myClasses.map((code) => (
+                {scopes.map((code) => (
                   <option key={code} value={code}>
-                    {classLabel(code)}
+                    {attendanceScopeLabel(code)}
                   </option>
                 ))}
               </Select>
@@ -214,40 +261,44 @@ export function MarkAttendancePage() {
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-3 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
             <span>
-              <strong>Sunday</strong> — a holiday for every class. Nothing to mark, and it does not
-              count toward anyone's attendance.
+              <strong>Sunday</strong> — a holiday for the whole school. Nothing to mark, and it
+              does not count toward anyone's attendance.
             </span>
           </div>
         )}
 
-        {!isSundayRoster && roster.data?.holiday && (
+        {!isSundayRoster && active.data?.holiday && (
           <div className="flex items-center gap-2 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
             <span>
-              <strong>{roster.data.holiday.label}</strong> is a school holiday. You can still mark
+              <strong>{active.data.holiday.label}</strong> is a school holiday. You can still mark
               attendance if the school was open.
             </span>
           </div>
         )}
 
-        {roster.data?.submittedAt && (
+        {active.data?.submittedAt && (
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-3 text-sm text-slate-700">
             <Info className="h-4 w-4 shrink-0" aria-hidden />
-            Already submitted {new Date(roster.data.submittedAt).toLocaleString('en-IN')} — saving again
+            Already submitted {new Date(active.data.submittedAt).toLocaleString('en-IN')} — saving again
             replaces it.
           </div>
         )}
 
         {save.error && <ErrorBlock message={(save.error as Error).message} />}
-        {roster.error && <ErrorBlock message={(roster.error as Error).message} />}
+        {active.error && <ErrorBlock message={(active.error as Error).message} />}
 
         <Card>
-          {roster.isPending && <LoadingBlock label="Loading roster…" />}
+          {active.isPending && <LoadingBlock label="Loading roster…" />}
 
-          {roster.data && entries.length === 0 && (
+          {active.data && entries.length === 0 && (
             <EmptyState
-              title={`No active students in ${classLabel(classCode)}`}
-              description="Onboard students into this class first."
+              title={isStaff ? 'No active teachers' : `No active students in ${attendanceScopeLabel(classCode)}`}
+              description={
+                isStaff
+                  ? 'Add teacher accounts under Users first.'
+                  : 'Onboard students into this class first.'
+              }
             />
           )}
 
@@ -268,7 +319,7 @@ export function MarkAttendancePage() {
               <table className="w-full text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th scope="col" className="w-16 px-5 py-3 font-medium">Roll</th>
+                    {!isStaff && <th scope="col" className="w-16 px-5 py-3 font-medium">Roll</th>}
                     <th scope="col" className="px-5 py-3 font-medium">Name</th>
                     <th scope="col" className="px-5 py-3 font-medium">Status</th>
                   </tr>
@@ -276,7 +327,7 @@ export function MarkAttendancePage() {
                 <tbody className="divide-y divide-slate-100">
                   {entries.map((entry, index) => (
                     <tr
-                      key={entry.studentId}
+                      key={entry.id}
                       ref={(node) => {
                         rowRefs.current[index] = node;
                       }}
@@ -288,23 +339,23 @@ export function MarkAttendancePage() {
                         focused === index ? 'bg-brand-50' : 'hover:bg-slate-50',
                       )}
                     >
-                      <td className="px-5 py-2 tabular-nums text-slate-500">{entry.rollNo ?? '—'}</td>
-                      <td className="px-5 py-2 font-medium text-slate-900">{entry.fullName}</td>
+                      {!isStaff && <td className="px-5 py-2 tabular-nums text-slate-500">{entry.rollNo ?? '—'}</td>}
+                      <td className="px-5 py-2 font-medium text-slate-900">{entry.name}</td>
                       <td className="px-5 py-2">
                         <div className="flex gap-1">
                           {ATTENDANCE_STATUSES.map((status) => {
-                            const active = marks[entry.studentId] === status;
+                            const chosen = marks[entry.id] === status;
                             return (
                               <button
                                 key={status}
                                 type="button"
                                 disabled={isReadOnly}
-                                aria-pressed={active}
-                                aria-label={`${entry.fullName}: ${ATTENDANCE_LABELS[status]}`}
-                                onClick={() => setStatus(entry.studentId, status)}
+                                aria-pressed={chosen}
+                                aria-label={`${entry.name}: ${ATTENDANCE_LABELS[status]}`}
+                                onClick={() => setStatus(entry.id, status)}
                                 className={cn(
                                   'rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
-                                  active ? TONE[status] : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                                  chosen ? TONE[status] : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
                                 )}
                               >
                                 {ATTENDANCE_LABELS[status]}

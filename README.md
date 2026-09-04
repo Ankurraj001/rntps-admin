@@ -329,7 +329,8 @@ is the primary key and appears on issued receipts.
 impossible. Three states only — **present, absent, holiday** — and **Sundays are holidays
 automatically**. Keyboard-driven roster (everyone starts Present; P/A/H set a status and advance),
 monthly grid, per-student history, below-threshold defaulter report, and a dashboard nudge for classes
-not yet marked today.
+not yet marked today. **Teacher attendance** is the same register with "Teachers" chosen instead of a
+class — see below for what it deliberately does not feed into.
 
 **Fees** — monthly fee heads per class (including transport-only heads), **per-student transport
 fares**, percentage or flat concessions, invoice runs that preview before committing and cannot double-bill, payment recording
@@ -379,7 +380,7 @@ A     GET    /users
 A     POST   /users                               emails a setup link; password only if mail is down
 A     PATCH  /users/:userId
 A     POST   /users/:userId/deactivate | /activate
-A     POST   /users/:userId/reset-password         emails a setup link; password only if mail is down
+A     POST   /users/:userId/reset-password         break-glass only, no UI; see Recovering access
 A     POST   /users/:userId/unlock
 
 A/T   GET    /students                            list, search, filter, paginate
@@ -400,6 +401,9 @@ A/T   GET    /students/stats
 A/T   GET    /attendance/roster?classCode&dateKey  teacher: assigned classes only
 A/T   PUT    /attendance/roster                    idempotent bulk upsert
 A/T   GET    /attendance/monthly?classCode&month
+A     GET    /attendance/staff/roster?dateKey      the teacher register
+A     PUT    /attendance/staff/roster              only an admin marks teachers
+A/T   GET    /attendance/staff/monthly?month       read-only, whole register
 A     GET    /attendance/defaulters?month&threshold
 A/T   GET    /attendance/unmarked                  scoped to the caller's classes
 A/T   GET    /attendance/student/:studentId
@@ -729,10 +733,16 @@ and Google sometimes blocks programmatic sends from a data-centre IP.
 - **A locked-out user:** an admin clears it from **Users → Unlock**, or the user resets their own
   password.
 - **A forgotten password:** the user clicks **Forgotten your password?** on the sign-in screen and gets
-  a link by email. Failing that, an admin uses **Users → Reset**, which emails the user a setup link —
-  or, if mail is unavailable, shows a one-time password to hand over.
+  a link by email. There is deliberately no reset button in **Users** — a password should only ever be
+  chosen by its owner, so the admin never handles one. Failing email, use the shell script below.
 - **An address nobody can receive mail at:** **Users** flags any account whose address has never been
-  confirmed by a completed link, which is usually a typo. Fix it with **Users → Edit**, then reset.
+  confirmed by a completed link, which is usually a typo. An address cannot be edited, since every
+  recovery path and audit trail keys on it: deactivate the account and add the user again.
+- **Role or class access is wrong:** **Users → Edit** changes a teacher's name, phone, role and
+  assigned classes. Only teacher rows offer it — an admin already reaches every class, so there is
+  nothing for the form to set. That makes promotion one-way from the UI: it drops the class list, and
+  demoting an admin back to teacher needs a direct `PATCH /users/:userId` with a role and at least one
+  class. The last active admin cannot be demoted or deactivated by either route.
 - **Nobody can sign in at all:** `npm run reset:password -- someone@school.example` from a shell with
   `MONGODB_URI` set. This reactivates the account, clears any lock, revokes every session and prints a
   one-time password. It is the only path that does not require an existing session or working email,
@@ -770,6 +780,29 @@ Deriving rather than storing is what makes this safe to introduce on a live data
 to **every past date with no backfill**, and a mark saved on a Sunday before the rule existed is
 ignored rather than left to quietly drag a percentage down. `sunday.test.ts` covers that case
 explicitly.
+
+### Teachers are on the same register, in their own collection
+
+Selecting **Teachers** instead of a class marks the teaching staff: active users with role `TEACHER`,
+same three states, same Sunday and same declared-holiday calendar — both services call the same
+`holidayFor` / `holidayMapFor` / totals helpers rather than each deriving the rules for itself. Only an
+admin can mark it; any signed-in user can read the monthly grid, which is why that response carries a
+name and nothing else about the user.
+
+It is stored in `staffattendances`, keyed `{userId}:{dateKey}`, **not** in `attendances` with a
+synthetic class code. The dashboard counts every row of `attendances` for today with no class filter,
+so a shared collection would blend an absent teacher into the school's "present today" figure. Keeping
+them apart makes that impossible by construction rather than by remembering a negative filter at every
+present and future read site — `staffAttendance.routes.test.ts` has a test named for exactly that.
+
+Consequently teacher attendance **deliberately does not appear** in the dashboard, the defaulter
+report, the daily collection email or the WhatsApp absentee list. Those are student figures. Nor is
+`TEACHERS` a member of `CLASS_CODES`: `nextClassCode` is index-based over that list, so an extra member
+would promote class 8 into it at rollover instead of graduating those students to alumni.
+
+One known limit: the roster and the grid both list *active* teachers, so a teacher who leaves mid-year
+drops out of that month's grid, exactly as an INACTIVE student does. Their rows are still in the
+collection; unlike a student, there is no per-person page to reach them from.
 
 A school that opens on a particular Sunday cannot record it. If that comes up, the fix is a per-date
 override in Settings' holiday list rather than loosening the rule.

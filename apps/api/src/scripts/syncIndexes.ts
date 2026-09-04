@@ -7,10 +7,11 @@ import { FeeStructure } from '../models/FeeStructure.js';
 import { Invoice } from '../models/Invoice.js';
 import { Notification } from '../models/Notification.js';
 import { Settings } from '../models/Settings.js';
+import { StaffAttendance } from '../models/StaffAttendance.js';
 import { Student } from '../models/Student.js';
 import { User } from '../models/User.js';
 
-const MODELS = [Student, Settings, User, AuditLog, Attendance, FeeStructure, Invoice, Notification, Expense];
+const MODELS = [Student, Settings, User, AuditLog, Attendance, StaffAttendance, FeeStructure, Invoice, Notification, Expense];
 
 /**
  * Builds the indexes declared in the schemas. This must run as a deploy step because

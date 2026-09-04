@@ -1,6 +1,13 @@
-import { CLASS_CODES, USER_ROLES, classLabel, type UserDto, type CreateUserInput } from '@rntps/shared';
+import {
+  CLASS_CODES,
+  USER_ROLES,
+  classLabel,
+  type ClassCode,
+  type UserDto,
+  type CreateUserInput,
+} from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, KeyRound, LockOpen, Plus, UserX } from 'lucide-react';
+import { Copy, LockOpen, Pencil, Plus, UserX } from 'lucide-react';
 import { useState } from 'react';
 import { userKeys, usersApi, type UserHandoverResult } from '@/api/auth';
 import { useCurrentUser } from '@/auth/AuthProvider';
@@ -15,6 +22,7 @@ export function UsersPage() {
   const me = useCurrentUser();
   const queryClient = useQueryClient();
   const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [handover, setHandover] = useState<Handover | null>(null);
 
   const users = useQuery({ queryKey: userKeys.all, queryFn: usersApi.list });
@@ -23,15 +31,12 @@ export function UsersPage() {
   const deactivate = useMutation({ mutationFn: usersApi.deactivate, onSuccess: invalidate });
   const activate = useMutation({ mutationFn: usersApi.activate, onSuccess: invalidate });
   const unlock = useMutation({ mutationFn: usersApi.unlock, onSuccess: invalidate });
-  const reset = useMutation({
-    mutationFn: usersApi.resetPassword,
-    onSuccess: async (result) => {
-      setHandover(handoverFrom(result));
-      await invalidate();
-    },
-  });
 
-  const mutationError = deactivate.error ?? activate.error ?? unlock.error ?? reset.error;
+  const mutationError = deactivate.error ?? activate.error ?? unlock.error;
+
+  // Editing is driven by id rather than the row's object so the open form always reflects
+  // the latest list data after a save elsewhere on the page.
+  const editing = users.data?.items.find((user) => user.id === editingId) ?? null;
 
   return (
     <>
@@ -39,7 +44,12 @@ export function UsersPage() {
         title="Users"
         description="Admins manage everything; teachers mark attendance for their assigned classes."
         action={
-          <Button onClick={() => setIsAdding((open) => !open)}>
+          <Button
+            onClick={() => {
+              setEditingId(null);
+              setIsAdding((open) => !open);
+            }}
+          >
             <Plus className="h-4 w-4" aria-hidden />
             Add user
           </Button>
@@ -56,6 +66,17 @@ export function UsersPage() {
             onDone={(result) => {
               setIsAdding(false);
               if (result) setHandover(result);
+              void invalidate();
+            }}
+          />
+        )}
+
+        {editing && (
+          <EditUserForm
+            key={editing.id}
+            user={editing}
+            onDone={() => {
+              setEditingId(null);
               void invalidate();
             }}
           />
@@ -84,8 +105,12 @@ export function UsersPage() {
                       key={user.id}
                       user={user}
                       isSelf={user.id === me.id}
-                      busy={reset.isPending || deactivate.isPending || activate.isPending || unlock.isPending}
-                      onReset={() => reset.mutate(user.id)}
+                      isEditing={user.id === editingId}
+                      busy={deactivate.isPending || activate.isPending || unlock.isPending}
+                      onEdit={() => {
+                        setIsAdding(false);
+                        setEditingId((current) => (current === user.id ? null : user.id));
+                      }}
                       onUnlock={() => unlock.mutate(user.id)}
                       onToggleActive={() =>
                         user.isActive ? deactivate.mutate(user.id) : activate.mutate(user.id)
@@ -105,15 +130,17 @@ export function UsersPage() {
 function UserRow({
   user,
   isSelf,
+  isEditing,
   busy,
-  onReset,
+  onEdit,
   onUnlock,
   onToggleActive,
 }: {
   user: UserDto;
   isSelf: boolean;
+  isEditing: boolean;
   busy: boolean;
-  onReset: () => void;
+  onEdit: () => void;
   onUnlock: () => void;
   onToggleActive: () => void;
 }) {
@@ -155,22 +182,17 @@ function UserRow({
               Unlock
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            onClick={() => {
-              // Resetting your own password signs you out and forces a change, with the
-              // new password shown exactly once. Worth a confirmation.
-              if (isSelf && !window.confirm(
-                'Reset your own password?\n\nYou will be signed out and must set a new password. The temporary password is shown only once.',
-              )) return;
-              onReset();
-            }}
-          >
-            <KeyRound className="h-4 w-4" aria-hidden />
-            Reset
-          </Button>
+          {/* No reset here on purpose: a user recovers their own password through
+              "Forgotten password", so nobody else needs to handle it. */}
+          {/* Admins have nothing this form can usefully change — they already reach every
+              class — so the row offers no Edit. Promoting a teacher is therefore one-way
+              from here; demoting one back needs a direct PATCH /users/:userId. */}
+          {user.role !== 'ADMIN' && (
+            <Button variant="ghost" size="sm" onClick={onEdit} aria-expanded={isEditing}>
+              <Pencil className="h-4 w-4" aria-hidden />
+              {isEditing ? 'Close' : 'Edit'}
+            </Button>
+          )}
           {/* Self-deactivation is blocked server-side too; hiding it avoids a pointless error. */}
           {!isSelf && (
             <Button variant="ghost" size="sm" disabled={busy} onClick={onToggleActive}>
@@ -314,17 +336,7 @@ function AddUserForm({ onDone }: { onDone: (result: Handover | null) => void }) 
 
         {role === 'TEACHER' && (
           <Field label="Assigned classes" required hint="A teacher can only mark attendance for these.">
-            <div className="flex flex-wrap gap-2 pt-1">
-              {CLASS_CODES.map((code) => (
-                <label
-                  key={code}
-                  className="flex cursor-pointer items-center gap-1.5 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm hover:bg-slate-50"
-                >
-                  <input type="checkbox" checked={classes.includes(code)} onChange={() => toggleClass(code)} />
-                  {classLabel(code)}
-                </label>
-              ))}
-            </div>
+            <ClassPicker selected={classes} onToggle={toggleClass} />
           </Field>
         )}
 
@@ -338,6 +350,116 @@ function AddUserForm({ onDone }: { onDone: (result: Handover | null) => void }) 
           >
             {create.isPending && <Spinner />}
             Create user
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function ClassPicker({
+  selected,
+  onToggle,
+}: {
+  selected: readonly string[];
+  onToggle: (code: ClassCode) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      {CLASS_CODES.map((code) => (
+        <label
+          key={code}
+          className="flex cursor-pointer items-center gap-1.5 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm hover:bg-slate-50"
+        >
+          <input type="checkbox" checked={selected.includes(code)} onChange={() => onToggle(code)} />
+          {classLabel(code)}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** Only ever opened for a teacher: admin rows have no Edit button. */
+function EditUserForm({ user, onDone }: { user: UserDto; onDone: () => void }) {
+  const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone);
+  const [role, setRole] = useState(user.role);
+  const [classes, setClasses] = useState<ClassCode[]>(user.assignedClasses as ClassCode[]);
+
+  const update = useMutation({
+    mutationFn: () =>
+      usersApi.update(user.id, {
+        name,
+        // optionalText drops a blank, so an existing number cannot be cleared here —
+        // only replaced. Sending it unchanged is harmless.
+        phone: phone.trim() === '' ? undefined : phone,
+        role,
+        assignedClasses: role === 'ADMIN' ? [] : classes,
+      }),
+    onSuccess: onDone,
+  });
+
+  function toggleClass(code: ClassCode) {
+    setClasses((current) =>
+      current.includes(code) ? current.filter((c) => c !== code) : [...current, code],
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title={`Edit ${user.name}`}
+        description="Change the role to promote a teacher to admin, or adjust which classes they can reach. Passwords are not managed here — users reset their own from the sign-in page."
+      />
+      <CardBody className="space-y-4">
+        {update.error && <ErrorBlock message={(update.error as Error).message} />}
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Full name" required>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Email" hint="Email cannot be changed — add a new user instead.">
+            <Input value={user.email} disabled />
+          </Field>
+          <Field label="Phone">
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+        </div>
+
+        <Field
+          label="Role"
+          required
+          hint={
+            role === 'ADMIN'
+              ? 'Admins reach every class, so no class list is kept for them. This cannot be undone from the Users page.'
+              : undefined
+          }
+        >
+          <Select value={role} onChange={(e) => setRole(e.target.value as UserDto['role'])}>
+            {USER_ROLES.map((value) => (
+              <option key={value} value={value}>
+                {value === 'ADMIN' ? 'Admin' : 'Teacher'}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {role === 'TEACHER' && (
+          <Field label="Assigned classes" required hint="A teacher can only mark attendance for these.">
+            <ClassPicker selected={classes} onToggle={toggleClass} />
+          </Field>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onDone}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => update.mutate()}
+            disabled={update.isPending || !name || (role === 'TEACHER' && classes.length === 0)}
+          >
+            {update.isPending && <Spinner />}
+            Save changes
           </Button>
         </div>
       </CardBody>

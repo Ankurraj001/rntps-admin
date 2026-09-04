@@ -36,8 +36,9 @@ export const usersApi = {
   deactivate: (id: string) => api.post<UserDto>(`/users/${id}/deactivate`),
   activate: (id: string) => api.post<UserDto>(`/users/${id}/activate`),
   unlock: (id: string) => api.post<UserDto>(`/users/${id}/unlock`),
-  resetPassword: (id: string) =>
-    api.post<UserHandoverResult>(`/users/${id}/reset-password`, {}),
+  // No admin-driven password reset: users recover their own from "Forgotten password".
+  // The API still exposes /users/:id/reset-password as a break-glass path, alongside the
+  // `npm run reset:password` script.
 };
 
 export const userKeys = { all: ['users'] as const };

@@ -46,11 +46,7 @@ export async function getRoster(classCode: ClassCode, dateKey: string): Promise<
 
   const marks = new Map(existing.map((record) => [record.studentId, record]));
   const sunday = isSunday(dateKey);
-  // A Sunday is a holiday without anyone declaring it. Derived rather than stored, so the
-  // rule holds for every past date as well and there is nothing to backfill.
-  const holiday = sunday
-    ? { dateKey, label: SUNDAY_HOLIDAY_LABEL }
-    : (settings.holidays.find((h) => h.dateKey === dateKey) ?? null);
+  const holiday = holidayFor(dateKey, settings.holidays);
 
   // The most recently marked record stands in for "who submitted this roster".
   const latest = existing.reduce<AttendanceDoc | null>(
@@ -134,11 +130,11 @@ export async function saveRoster(
   return { saved: operations.length, dateKey: payload.dateKey };
 }
 
-function emptyTotals(): AttendanceTotals {
+export function emptyTotals(): AttendanceTotals {
   return { present: 0, absent: 0, holiday: 0, workingDays: 0, percentage: 0 };
 }
 
-function addToTotals(totals: AttendanceTotals, status: AttendanceStatus): void {
+export function addToTotals(totals: AttendanceTotals, status: AttendanceStatus): void {
   switch (status) {
     case 'PRESENT':
       totals.present += 1;
@@ -153,7 +149,44 @@ function addToTotals(totals: AttendanceTotals, status: AttendanceStatus): void {
   if (countsAsWorkingDay(status)) totals.workingDays += 1;
 }
 
-function finaliseTotals(totals: AttendanceTotals): AttendanceTotals {
+/**
+ * The holiday covering one day, if any.
+ *
+ * A Sunday is a holiday without anyone declaring it, and wins over a declared one. Derived
+ * rather than stored, so the rule holds for every past date as well and there is nothing to
+ * backfill. Shared with the teacher roster, which follows the same calendar.
+ */
+export function holidayFor(
+  dateKey: string,
+  declared: { dateKey: string; label: string }[],
+): { dateKey: string; label: string } | null {
+  if (isSunday(dateKey)) return { dateKey, label: SUNDAY_HOLIDAY_LABEL };
+  return declared.find((holiday) => holiday.dateKey === dateKey) ?? null;
+}
+
+/**
+ * dateKey -> holiday label for a month: every Sunday, then any declared school holiday.
+ *
+ * Sundays are derived rather than stored, so the rule reaches every past date with no
+ * backfill. Declared holidays are applied second so a named holiday that lands on a Sunday
+ * shows its own label. Shared with the teacher grid, which follows the same calendar.
+ */
+export function holidayMapFor(
+  dateKeys: string[],
+  declared: { dateKey: string; label: string }[],
+): Record<string, string> {
+  const holidays: Record<string, string> = {};
+  for (const dateKey of dateKeys) {
+    if (isSunday(dateKey)) holidays[dateKey] = SUNDAY_HOLIDAY_LABEL;
+  }
+  const inMonth = new Set(dateKeys);
+  for (const holiday of declared) {
+    if (inMonth.has(holiday.dateKey)) holidays[holiday.dateKey] = holiday.label;
+  }
+  return holidays;
+}
+
+export function finaliseTotals(totals: AttendanceTotals): AttendanceTotals {
   totals.percentage = attendancePercentage(totals.present, totals.workingDays);
   return totals;
 }
@@ -175,14 +208,7 @@ export async function getMonthly(classCode: ClassCode, month: string): Promise<M
   }
 
   const allDateKeys = dateKeysInMonth(month);
-
-  const holidays: Record<string, string> = {};
-  for (const dateKey of allDateKeys) {
-    if (isSunday(dateKey)) holidays[dateKey] = SUNDAY_HOLIDAY_LABEL;
-  }
-  for (const holiday of settings.holidays) {
-    if (holiday.dateKey >= from && holiday.dateKey <= to) holidays[holiday.dateKey] = holiday.label;
-  }
+  const holidays = holidayMapFor(allDateKeys, settings.holidays);
 
   const rows: MonthlyRow[] = students.map((student) => {
     const totals = emptyTotals();
