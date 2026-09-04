@@ -61,7 +61,9 @@ function toDto(doc: NotificationDoc): NotificationBatchDto {
       invoiceIds: [...item.invoiceIds],
       totalDueRupees: item.totalDueRupees,
       renderedMessage: item.renderedMessage,
-      waLink: item.waLink,
+      // Derived, never stored: it is `buildWaLink(guardianPhone, renderedMessage)` by
+      // construction, and the percent-encoded copy cost ~64% of every batch document.
+      waLink: buildWaLink(item.guardianPhone, item.renderedMessage),
       status: item.status,
       sentAt: item.sentAt?.toISOString() ?? null,
     })),
@@ -260,7 +262,6 @@ export async function createBatch(
       invoiceIds: group.invoiceIds,
       totalDueRupees,
       renderedMessage: message,
-      waLink: buildWaLink(group.guardianPhone, message),
       status: 'PENDING',
       sentAt: null,
       sentBy: null,

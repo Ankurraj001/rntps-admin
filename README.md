@@ -92,7 +92,8 @@ counters are never reset.
 | `npm run report:daily -- [YYYY-MM-DD]` | Sends the daily collection email by hand; defaults to today |
 | `npm run report:expenses -- [YYYY-MM]` | Sends the monthly expense email by hand; defaults to this month |
 | `npm run test:e2e` | Playwright end-to-end tests against a running stack |
-| `npm run indexes:sync` | Builds the schema indexes — **required deploy step**, see below |
+| `npm run indexes:sync` | Builds the schema indexes by hand; the deploy runs it automatically, see below |
+| `npm run db:stats` | Reports size and index usage per collection against the 512 MB Atlas M0 budget |
 | `npm run migrate:rupees --workspace @rntps/api` | One-off paise → rupees conversion; `--dry-run` reports without writing |
 | `npm run migrate:drop-plaintext` | One-off: unsets the old readable-password field; `--dry-run`, `--force-rotation` |
 | `npm run tokens:clear-expired --workspace @rntps/api` | Housekeeping: clears expired reset tokens; `--dry-run` |
@@ -211,6 +212,19 @@ StrictMode double-invoking the effect in development) all send the same cookie b
 the new one; without the window, users would be signed out on nearly every page load. The client also
 funnels every refresh — bootstrap, scheduled renewal, and the 401 retry — through one single-flight
 promise, so the grace path is rarely needed.
+
+**A rotated token is kept for 24 hours, then dropped.** It is useless for authentication the moment
+it rotates, but it is the tripwire that makes reuse detectable, so it cannot be discarded at
+rotation. It was previously kept until `expiresAt` — the full `REFRESH_TOKEN_TTL_DAYS`. Because the
+client renews on a timer rather than on a 401, a tab left open through a working day rotates about
+every 14 minutes, which left roughly 475 spent entries (~120 KB) inside one user document, each one
+also indexed by `refreshTokens.tokenHash`, and the whole document rewritten on every rotation. Ten
+staff accounts outweighed all 250 student records.
+
+A day is 8,640× the grace window and far longer than any real replay takes. The trade-off is
+explicit: a token replayed for the first time more than a day after rotation is still refused, but no
+longer revokes its family, so nobody learns it leaked. Theft of a *live* token — the case that
+matters — is unaffected.
 
 **Passwords use `scrypt` from `node:crypto`**, not argon2 or bcrypt. Both of those are native addons,
 and native addons inside a bundled serverless function are a reliable source of cold-start failures.
@@ -650,6 +664,37 @@ Two things worth knowing:
 Locally the schedule cannot run at all — use `npm run report:daily`. With no mail transport configured
 the body is logged instead of sent, so the table can be read without credentials.
 
+### Storage, and the 512 MB ceiling
+
+Atlas M0 gives you **512 MB** — not 512 GB, which is an easy misreading with an expensive
+conclusion. Atlas enforces it against *logical* size, so WiredTiger compression buys no headroom.
+Run `npm run db:stats` to see where you actually stand; the numbers below are the shape to expect
+for one school of ~250 students, and they are estimates until that script contradicts them.
+
+Steady growth is roughly **25 MB/year**, which is about **20 years** of runway. Ranked by what
+consumes it:
+
+| Collection | Why it grows | Share |
+|---|---|---|
+| `attendance` | 250 students × ~250 non-Sunday school days = ~62,500 docs/yr. A roster save upserts one document per student per day, `PRESENT` included. | ~67% |
+| `invoices` | 250 × 12/yr at ~1.1 KB, across nine indexes — the indexes are ~a third of it. | ~19% |
+| `notifications` | Few documents, but each is a batch of ~200 embedded fee slips. | ~10% |
+| `auditLogs` | ~6,500 docs/yr, then flat: the 730-day TTL is the only thing in this database that expires. | flat |
+| `users` | Ten people. Rotated refresh tokens are held for 24 hours, so ~10 KB each; before that window existed it was ~120 KB each, outweighing all 250 student records. | flat |
+
+Nothing else in this system ever shrinks: invoices are voided rather than deleted, payments are
+flagged rather than removed, students are deactivated rather than deleted, and a charge is never
+pulled once billed. That is deliberate — it is a financial record — but it means storage is
+monotonic and worth watching once a year rather than never.
+
+**Two things bite before storage does.** M0 has no backups (see below), and it **pauses after 30
+days of inactivity** — a long holiday with no traffic can suspend the cluster, and the first request
+back fails in a way that looks like a bug.
+
+If it ever does fill, the only lever with real headroom is archiving closed academic years:
+export a year's `attendance` and `invoices`, verify the counts, then delete them. Everything else
+is rounding error by comparison.
+
 ### Backups
 
 Enable backups on Atlas (M10 and above) and **do one restore drill into a scratch cluster before
@@ -750,8 +795,26 @@ and Google sometimes blocks programmatic sends from a data-centre IP.
 
 ### After a schema change
 
-`npm run indexes:sync`. Production runs with `autoIndex: false`, so new indexes are not created
-automatically.
+Nothing, if you are deploying: `npm run build && npm run indexes:deploy` is the Netlify build
+command, and `indexes:deploy` runs `indexes:sync` for you. Run `npm run indexes:sync` by hand only
+when changing indexes on a database you are not deploying to — a local `mongod`, or a cluster you
+are inspecting.
+
+Production runs with `autoIndex: false`, so indexes are never created on the fly. This used to be
+documented here as a manual deploy step, and because nothing in the pipeline ran it, a cluster could
+be serving traffic with **no secondary indexes at all** — every listing query a collection scan, and
+the 730-day TTL on `auditLogs` never expiring anything. `npm run db:stats` tells you which is the
+case: a collection holding only `_id_` when its schema declares more has never been synced.
+
+Two things to know about the automatic run:
+
+- **It only fires when `CONTEXT=production`.** `syncIndexes()` *drops* indexes a schema no longer
+  declares, so an unguarded run would let a Deploy Preview of an unmerged branch delete an index
+  from the production database.
+- **It fails the deploy if it cannot reach Atlas.** That is deliberate — a deploy that silently
+  loses its indexes is worse than one that stops. If you need to ship a frontend fix while the
+  database is unreachable, override the build command in the Netlify UI for that one deploy, then
+  run `npm run indexes:sync` once Atlas is back.
 
 ### Error reporting
 

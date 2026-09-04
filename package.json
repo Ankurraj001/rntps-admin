@@ -22,6 +22,8 @@
     "mongo:start": "brew services start mongodb-community",
     "mongo:stop": "brew services stop mongodb-community",
     "indexes:sync": "npm run indexes:sync -w @rntps/api",
+    "indexes:deploy": "if [ \"$CONTEXT\" = production ]; then npm run indexes:sync -w @rntps/api; else echo \"index sync skipped (CONTEXT=${CONTEXT:-local})\"; fi",
+    "db:stats": "npm run db:stats -w @rntps/api",
     "seed:admin": "npm run seed:admin -w @rntps/api --",
     "reset:password": "npm run reset:password -w @rntps/api --",
     "test:e2e": "npm run test:e2e -w @rntps/web",

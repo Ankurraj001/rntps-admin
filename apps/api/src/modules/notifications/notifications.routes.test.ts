@@ -66,6 +66,35 @@ describe('POST /notifications', () => {
     expect(item.waLink).toMatch(/^https:\/\/wa\.me\/919876543210\?text=/);
   });
 
+  it('rebuilds the wa.me link from the stored message, on create and on reload', async () => {
+    await billClass('5');
+    await billClass('2');
+    // Siblings, so the message takes the multi-child layout and is long enough that
+    // `fitWaMessage` has something to trim. That is the case where a link built once at
+    // write time and a link rebuilt at read time could silently diverge.
+    const elder = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await createStudent(
+      studentInput({ fullName: 'Ananya Sharma', classCode: '2', siblingOfStudentId: elder.studentId }),
+    );
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    const created = await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
+    const item = created.body.items[0];
+
+    // The link is no longer persisted, so this equality is the whole contract: whatever
+    // the parent is shown must be exactly the message the batch recorded.
+    const decode = (link: string) => decodeURIComponent(link.split('text=')[1] as string);
+    expect(decode(item.waLink)).toBe(item.renderedMessage);
+    expect(item.waLink).toBe(buildWaLink(item.guardianPhone, item.renderedMessage));
+
+    // And it survives a round trip through Mongo, where the field does not exist.
+    const reloaded = await as.get(`/api/v1/notifications/${created.body.id}`).expect(200);
+    const same = reloaded.body.items[0];
+    expect(same.renderedMessage).toBe(item.renderedMessage);
+    expect(same.waLink).toBe(item.waLink);
+    expect(decode(same.waLink)).toBe(same.renderedMessage);
+  });
+
   it('merges siblings into one message, not one per child', async () => {
     await billClass('5');
     await billClass('2');

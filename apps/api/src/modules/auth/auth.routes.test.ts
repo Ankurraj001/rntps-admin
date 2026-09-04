@@ -176,6 +176,47 @@ describe('POST /auth/refresh', () => {
     await request(app).post('/api/v1/auth/refresh').set('Cookie', cookieHeader(second)).expect(401);
   });
 
+  it('drops rotated tokens past the retention window, so the array cannot grow unbounded', async () => {
+    const first = await signIn();
+
+    const rotated = await request(app)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', cookieHeader(first))
+      .expect(200);
+    const second = refreshCookieFrom(rotated) as string;
+
+    const countTokens = async () => {
+      const user = await User.findOne({ email: 'admin@school.test' }).select('+refreshTokens');
+      return user?.refreshTokens.length ?? 0;
+    };
+
+    // A live token plus the one it replaced, still held as a reuse tripwire.
+    expect(await countTokens()).toBe(2);
+
+    // Age the spent entry past the retention window. A tab refreshing every 14 minutes
+    // used to accumulate these for the full 14-day token lifetime.
+    await User.updateOne(
+      { email: 'admin@school.test' },
+      { $set: { 'refreshTokens.$[t].rotatedAt': new Date(Date.now() - 25 * 60 * 60 * 1000) } },
+      { arrayFilters: [{ 't.rotatedAt': { $ne: null } }] },
+    );
+
+    const next = await request(app)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', cookieHeader(second))
+      .expect(200);
+
+    // The stale entry is gone, not merely joined by a third: the new live token and the
+    // one it just replaced are all that remain.
+    expect(await countTokens()).toBe(2);
+
+    // Pruned means unusable, which it already was.
+    await request(app).post('/api/v1/auth/refresh').set('Cookie', cookieHeader(first)).expect(401);
+    // ...and the current chain is untouched by the pruning.
+    const latest = refreshCookieFrom(next) as string;
+    await request(app).post('/api/v1/auth/refresh').set('Cookie', cookieHeader(latest)).expect(200);
+  });
+
   it('clears the cookie when the token is rejected', async () => {
     const res = await request(app)
       .post('/api/v1/auth/refresh')

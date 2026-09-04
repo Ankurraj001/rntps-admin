@@ -6,7 +6,17 @@
 [build]
   # `npm run build` builds shared -> api -> web, in that order. The function bundles
   # from apps/api/dist, so the api build must have run first.
-  command = "npm run build"
+  #
+  # `indexes:deploy` then builds the indexes declared in the schemas, because
+  # `connectDatabase` sets autoIndex: false in production — so without this step the
+  # secondary indexes and the 730-day TTL on auditLogs simply do not exist, and nothing
+  # says so. It was previously documented as a deploy step that the pipeline never ran.
+  #
+  # It is guarded on CONTEXT = production inside the script, and that guard is
+  # load-bearing: syncIndexes() DROPS indexes a schema no longer declares, so an
+  # unguarded run would let a Deploy Preview of an unmerged branch delete a production
+  # index. Same reasoning as the scheduled functions below only firing on production.
+  command = "npm run build && npm run indexes:deploy"
   publish = "apps/web/dist"
   functions = "netlify/functions"
 

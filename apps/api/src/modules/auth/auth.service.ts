@@ -20,7 +20,7 @@ import {
   verifyMailConnection,
 } from '../../lib/mailer.js';
 import { invitationEmail, passwordResetEmail } from '../../lib/mailTemplates.js';
-import { User, type UserDoc, type UserHydrated } from '../../models/User.js';
+import { User, type RefreshTokenSub, type UserDoc, type UserHydrated } from '../../models/User.js';
 
 export function toUserDto(user: UserDoc): UserDto {
   return {
@@ -49,6 +49,39 @@ export interface SessionTokens {
   expiresIn: number;
 }
 
+/**
+ * How long a rotated token is kept around after it stops being usable.
+ *
+ * A rotated token is dead weight for authentication — presenting it never grants a session
+ * — but it is not dead weight for *detection*: recognising one is the only signal that a
+ * token was stolen, and it is what triggers revoking the whole family. So it cannot simply
+ * be dropped at rotation.
+ *
+ * It does not need keeping until `expiresAt`, though, which is what used to happen. The
+ * frontend renews on a timer rather than on a 401, so a tab open through a working day
+ * rotates roughly every 14 minutes; over a 14-day `REFRESH_TOKEN_TTL_DAYS` that left ~475
+ * spent entries, ~120 KB, inside one user document — rewritten in full on every rotation,
+ * and indexed by `refreshTokens.tokenHash` on every entry. Ten staff accounts outweighed
+ * all 250 student records.
+ *
+ * A day is still 8,640x `REFRESH_REUSE_GRACE_MS` and far longer than any real replay
+ * takes, so it keeps the tripwire while bounding the array at a day's rotations. The
+ * trade-off is explicit: a token replayed for the first time more than a day after it was
+ * rotated is refused, as it always was, but no longer revokes its family — nobody learns
+ * that it leaked. Theft of a *live* token is unaffected, which is the case that matters.
+ */
+const ROTATED_TOKEN_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Whether a stored refresh token is still worth carrying, for use or as a tripwire. */
+function keepRefreshToken(token: RefreshTokenSub, now: Date): boolean {
+  if (token.revokedAt !== null) return false;
+  if (token.expiresAt.getTime() <= now.getTime()) return false;
+  if (token.rotatedAt !== null) {
+    return now.getTime() - token.rotatedAt.getTime() <= ROTATED_TOKEN_RETENTION_MS;
+  }
+  return true;
+}
+
 async function issueSession(
   user: UserHydrated,
   family: string,
@@ -67,10 +100,7 @@ async function issueSession(
     userAgent: userAgent.slice(0, 200),
   });
 
-  // Drop anything expired or revoked so the array cannot grow without bound.
-  user.refreshTokens = user.refreshTokens.filter(
-    (t) => t.expiresAt.getTime() > now.getTime() && t.revokedAt === null,
-  );
+  user.refreshTokens = user.refreshTokens.filter((t) => keepRefreshToken(t, now));
 
   await user.save();
 

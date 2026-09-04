@@ -13,6 +13,7 @@
     "seed:settings": "tsx src/scripts/seedSettings.ts",
     "seed:demo": "tsx src/scripts/seedDemoStudents.ts",
     "indexes:sync": "tsx src/scripts/syncIndexes.ts",
+    "db:stats": "tsx src/scripts/dbStats.ts",
     "seed:admin": "tsx src/scripts/seedAdmin.ts",
     "reset:password": "tsx src/scripts/resetPassword.ts",
     "mail:test": "tsx src/scripts/testMail.ts",

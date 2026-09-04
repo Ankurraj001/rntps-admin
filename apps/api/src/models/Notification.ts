@@ -16,7 +16,6 @@ export interface NotificationItemSub {
   invoiceIds: string[];
   totalDueRupees: number;
   renderedMessage: string;
-  waLink: string;
   status: NotificationItemStatus;
   sentAt: Date | null;
   sentBy: string | null;
@@ -61,8 +60,12 @@ const itemSchema = new Schema<NotificationItemSub>(
     totalDueRupees: { type: Number, required: true },
     // The message is stored as rendered, so the record shows exactly what was sent even
     // if the template changes afterwards.
+    //
+    // It is also the only stored copy: the `wa.me` link is rebuilt from this string and
+    // `guardianPhone` on read. Storing the link too meant persisting the same text twice,
+    // once percent-encoded — and encoding is far from length-preserving (every `₹` costs
+    // nine characters), so the duplicate was ~64% of every batch document.
     renderedMessage: { type: String, required: true },
-    waLink: { type: String, required: true },
     status: { type: String, enum: NOTIFICATION_ITEM_STATUSES, default: 'PENDING' },
     sentAt: { type: Date, default: null },
     sentBy: { type: String, default: null },
