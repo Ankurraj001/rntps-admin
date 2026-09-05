@@ -31,6 +31,13 @@ export function absenteeMessage(
   const absent = entries.filter((entry) => marks[entry.studentId] === 'ABSENT');
   const heading = `*Absent students*\n${classLabel(classCode)} · ${formatDate(dateKey)}`;
 
+  // A holiday has nobody absent, but reporting that as "all students present" tells the
+  // office the school ran a full day. Checked before the empty case, which it would
+  // otherwise fall into.
+  if (entries.length > 0 && entries.every((entry) => marks[entry.studentId] === 'HOLIDAY')) {
+    return `${heading}\n\nHoliday — the school was closed.`;
+  }
+
   if (absent.length === 0) {
     return `${heading}\n\nNobody absent — all students present.`;
   }

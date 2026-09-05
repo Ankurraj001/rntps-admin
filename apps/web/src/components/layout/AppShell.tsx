@@ -42,6 +42,10 @@ const NAV: NavItem[] = [
   { to: '/notifications', label: 'Fee reminders', icon: MessageSquare, adminOnly: true },
   { to: '/reports', label: 'Reports', icon: BarChart3, adminOnly: true },
   { to: '/users', label: 'Users', icon: UserCog, adminOnly: true },
+  // Not adminOnly: a teacher enters marks for their own classes. It sits here because
+  // that is where it was asked for; the admin-only entries around it are filtered out,
+  // so for a teacher it simply follows Monthly view.
+  { to: '/academics', label: 'Academics', icon: GraduationCap },
   { to: '/rollover', label: 'Year rollover', icon: RefreshCw, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
 ];

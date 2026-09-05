@@ -11,4 +11,5 @@ export * from './schemas/expenses.js';
 export * from './schemas/fees.js';
 export * from './schemas/notifications.js';
 export * from './schemas/passwordReset.js';
+export * from './schemas/academics.js';
 export * from './feeMessage.js';

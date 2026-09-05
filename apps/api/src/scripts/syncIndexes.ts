@@ -2,6 +2,7 @@ import { connectDatabase, disconnectDatabase } from '../config/db.js';
 import { logger } from '../config/logger.js';
 import { Attendance } from '../models/Attendance.js';
 import { AuditLog } from '../models/AuditLog.js';
+import { ExamResult } from '../models/ExamResult.js';
 import { Expense } from '../models/Expense.js';
 import { FeeStructure } from '../models/FeeStructure.js';
 import { Invoice } from '../models/Invoice.js';
@@ -11,7 +12,7 @@ import { StaffAttendance } from '../models/StaffAttendance.js';
 import { Student } from '../models/Student.js';
 import { User } from '../models/User.js';
 
-const MODELS = [Student, Settings, User, AuditLog, Attendance, StaffAttendance, FeeStructure, Invoice, Notification, Expense];
+const MODELS = [Student, Settings, User, AuditLog, Attendance, StaffAttendance, FeeStructure, Invoice, Notification, Expense, ExamResult];
 
 /**
  * Builds the indexes declared in the schemas. This must run as a deploy step because

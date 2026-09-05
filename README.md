@@ -151,6 +151,7 @@ which doubles as the uniqueness constraint:
 | `invoices` *(phase 4)* | `{studentId}:{period}` | `RNTPS-26-001:2026-08` |
 | `attendance` *(phase 3)* | `{studentId}:{dateKey}` | `RNTPS-26-001:2026-08-25` |
 | `feeStructures` *(phase 4)* | `{classCode}:{year}` | `5:2026-27` |
+| `examResults` | `{studentId}:{academicYear}` | `RNTPS-26-001:2026-27` |
 | `settings` | fixed literal | `app` |
 | `users` *(phase 2)*, `notifications`, `auditLogs`, `expenses` | ObjectId | — |
 
@@ -346,6 +347,13 @@ monthly grid, per-student history, below-threshold defaulter report, and a dashb
 not yet marked today. **Teacher attendance** is the same register with "Teachers" chosen instead of a
 class — see below for what it deliberately does not feed into.
 
+**Academics** — exam marks for the six papers a session has: UT-1, UT-2, half-yearly, UT-3, UT-4 and
+final. One card per student per session, keyed `studentId:academicYear`, holding all six as
+percentages. The page is a class gradebook — filter by name, class and session, sort on any column,
+and edit a row in place. Marks are the one number in this system that is **not** a whole number: two
+decimal places are allowed and a third is rejected rather than rounded. A teacher enters marks for
+their assigned classes only. A student's whole history is on the Academics tab of their record.
+
 **Fees** — monthly fee heads per class (including transport-only heads), **per-student transport
 fares**, percentage or flat concessions, invoice runs that preview before committing and cannot double-bill, payment recording
 with sequential receipt numbers, reversal that keeps the record, voiding, and printable receipts.
@@ -421,6 +429,11 @@ A/T   GET    /attendance/staff/monthly?month       read-only, whole register
 A     GET    /attendance/defaulters?month&threshold
 A/T   GET    /attendance/unmarked                  scoped to the caller's classes
 A/T   GET    /attendance/student/:studentId
+
+A/T   GET    /academics?academicYear&classCode&q&sort&order   gradebook; teacher: assigned classes only
+A/T   GET    /academics/years                      sessions with marks, plus the one in progress
+A/T   GET    /academics/student/:studentId         every session on record, newest first
+A/T   PUT    /academics/marks                      all six papers at once; idempotent upsert
 
 A     GET    /fees/structures
 A     GET|PUT /fees/structures/:classCode/:academicYear
@@ -599,7 +612,9 @@ validated so strictly. The promotion is recorded in `auditLogs` with the actor, 
 the counts.
 
 Rolling over does not disturb history: invoices snapshot the student's name and class
-(`models/Invoice.ts`), so last year's bills still read the way they were issued.
+(`models/Invoice.ts`), so last year's bills still read the way they were issued. Exam marks do the
+same (`models/ExamResult.ts`) and are **not** carried forward — last session stays readable at the
+class and roll number the student actually sat those papers under, and the new session starts empty.
 
 ### Monthly (fees)
 
@@ -903,6 +918,52 @@ Any `LATE` or `LEAVE` records left in the database are converted by
 ABSENT (they were not). Records left on a retired value would simply stop being counted, which is
 worse than converting them.
 
+
+## Academics: six exams as percentages
+
+A session has six papers — **UT-1, UT-2, half-yearly, UT-3, UT-4, final** — and they are a fixed
+list (`EXAM_CODES`), not a collection. Every class sits the same six, so there is nothing to
+configure and the array order is simply the order of the columns on screen.
+
+**One document per student per session**, keyed `studentId:academicYear`. That makes a second marks
+card for the same student and session structurally impossible, exactly as `studentId:dateKey` does
+for double-marking attendance, and it makes correcting a mark a plain idempotent upsert with no
+"already entered" special case. All six papers live in that one document, so the edit dialog saves
+in a single write.
+
+**Marks carry a session, and they have to.** The year rollover promotes a student *in place* — their
+class moves up one, their `academicYear` is rewritten and their roll number is cleared for
+reassignment. Marks keyed on the student alone would be overwritten every April, and last session's
+results would be re-labelled with this session's class. An exam has no date to derive a session from
+either, the way attendance and expenses do: "UT-1" is a bare session-scoped label. So the record also
+**snapshots the student's name, class and roll number**, for the same reason an invoice does. After a
+rollover the live student record has moved on, and a closed session is answered entirely from those
+snapshots.
+
+**A mark is a percentage, so it is the one number here that is not a whole number.** The
+integer-rupees rule is about money, and the concession schema already blesses the same exception in
+the other direction — 12.5% is a real thing a school offers. Two decimal places are allowed and a
+third is *rejected, not rounded*: silently turning 87.555 into 87.56 disagrees with whatever the
+teacher read off the answer sheet, and the disagreement is invisible once stored.
+
+**Blank is not zero.** A paper not yet sat is `null` and shows as a dash; 0 is a real mark and is
+stored as one. Sorting keeps that distinction: whichever column the gradebook is sorted on, students
+with no mark for it fall to the bottom in *both* directions. Treating a missing mark as 0 would make
+"who did worst in UT-1" answer with students who have not sat it.
+
+**Access follows the class on the student record, never the request.** There is no `classCode` in the
+save payload — the class is read from the student, or from the stored snapshot for a closed session —
+so a teacher cannot reach another class by naming it in the body. That is the same bypass
+`requireClassAccess` closes on every other route; here it is enforced one layer down, because the
+gradebook's class filter is optional and its extractor would reject every teacher asking for "all
+classes" while waving admins through.
+
+**A new card can only be opened for the session in progress.** There is no sound class snapshot for a
+session a student was not in, so rather than guess one and file the marks under the wrong class it is
+refused. An existing card stays correctable in any session, which is what makes a genuine mistake in
+a closed year fixable.
+
+The rules above are pinned by `modules/academics/academics.routes.test.ts`.
 
 ## Dues and other charges
 

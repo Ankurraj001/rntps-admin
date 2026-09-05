@@ -7,6 +7,7 @@ import { env, isTest } from './config/env.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestId } from './middleware/requestId.js';
 import { rejectMongoOperators } from './middleware/validate.js';
+import { academicsRoutes } from './modules/academics/academics.routes.js';
 import { attendanceRoutes } from './modules/attendance/attendance.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { expenseRoutes } from './modules/expenses/expenses.routes.js';
@@ -32,7 +33,11 @@ export function createApp(): Express {
       // Required for the refresh cookie in local dev, where the SPA and API sit on
       // different ports. In production they share one Netlify origin and CORS is unused.
       credentials: true,
-      methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+      // PUT belongs here: /attendance/roster, /fees/structures and /academics/marks all
+      // use it. Its absence went unnoticed because dev proxies /api through Vite and
+      // production is same-origin on Netlify, so no preflight is ever issued — but a
+      // cross-origin client fails the preflight rather than the request, which is opaque.
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     }),
   );
   app.use(express.json({ limit: '256kb' }));
@@ -63,6 +68,7 @@ export function createApp(): Express {
 
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/users', userRoutes);
+  app.use('/api/v1/academics', academicsRoutes);
   app.use('/api/v1/attendance', attendanceRoutes);
   app.use('/api/v1/expenses', expenseRoutes);
   app.use('/api/v1/fees', feesRoutes);

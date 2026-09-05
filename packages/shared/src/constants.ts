@@ -138,3 +138,24 @@ export const PAYMENT_MODE_LABELS: Record<PaymentMode, string> = {
 /** Which students a fee head applies to. */
 export const FEE_HEAD_SCOPES = ['ALL', 'TRANSPORT_OPTED'] as const;
 export type FeeHeadScope = (typeof FEE_HEAD_SCOPES)[number];
+
+/**
+ * The school's fixed exam list, in the order they are sat and the order the gradebook
+ * shows them. Unit tests bracket the two big papers: UT-1 and UT-2 before the half-yearly,
+ * UT-3 and UT-4 before the final.
+ *
+ * Array order is load-bearing twice over — it is the column order on the Academics page,
+ * and `EXAM_CODES` is what `z.enum()` accepts, so a code removed here stops validating
+ * anywhere a mark is saved.
+ */
+export const EXAM_CODES = ['UT1', 'UT2', 'HALF_YEARLY', 'UT3', 'UT4', 'FINAL'] as const;
+export type ExamCode = (typeof EXAM_CODES)[number];
+
+export const EXAM_LABELS: Record<ExamCode, string> = {
+  UT1: 'UT-1',
+  UT2: 'UT-2',
+  HALF_YEARLY: 'Half-Yearly',
+  UT3: 'UT-3',
+  UT4: 'UT-4',
+  FINAL: 'Final',
+};

@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, inject } from 'vitest';
 // indexes can be created before any test runs.
 import '../models/Attendance.js';
 import '../models/AuditLog.js';
+import '../models/ExamResult.js';
 import '../models/Expense.js';
 import '../models/FeeStructure.js';
 import '../models/Invoice.js';

@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { RequireAuth, RequireRole } from '@/auth/RouteGuards';
 import { AppShell } from '@/components/layout/AppShell';
+import { AcademicsPage } from '@/pages/academics/AcademicsPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { MarkAttendancePage } from '@/pages/attendance/MarkAttendancePage';
 import { FeeStructuresPage } from '@/pages/fees/FeeStructuresPage';
@@ -54,6 +55,7 @@ export const router = createBrowserRouter([
       { path: 'students/new', element: adminOnly(<StudentFormPage mode="create" />) },
       { path: 'students/:studentId', element: <StudentDetailPage /> },
       { path: 'students/:studentId/edit', element: adminOnly(<StudentFormPage mode="edit" />) },
+      { path: 'academics', element: <AcademicsPage /> },
       { path: 'attendance', element: <MarkAttendancePage /> },
       { path: 'attendance/monthly', element: <MonthlyAttendancePage /> },
       { path: 'fees/structures', element: adminOnly(<FeeStructuresPage />) },

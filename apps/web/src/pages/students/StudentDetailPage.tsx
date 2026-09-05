@@ -1,4 +1,6 @@
 import {
+  EXAM_CODES,
+  EXAM_LABELS,
   STUDENT_STATUSES,
   academicYearForPeriod,
   buildLineItems,
@@ -12,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Pencil, Printer, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { academicKeys, academicsApi } from '@/api/academics';
 import { attendanceApi, attendanceKeys } from '@/api/attendance';
 import { feeKeys, feesApi } from '@/api/fees';
 import { studentKeys, studentsApi } from '@/api/students';
@@ -27,7 +30,7 @@ import { useAuth } from '@/auth/AuthProvider';
 import { ageFrom, cn, displayPhone, formatDate } from '@/lib/utils';
 
 // Fees leads: what a parent is at the counter about is almost always money.
-const TABS = ['Fees', 'Profile', 'Family', 'Attendance'] as const;
+const TABS = ['Fees', 'Profile', 'Family', 'Attendance', 'Academics'] as const;
 type Tab = (typeof TABS)[number];
 
 export function StudentDetailPage() {
@@ -127,6 +130,7 @@ export function StudentDetailPage() {
         )}
         {active === 'Fees' && <StudentFeesTab student={data} canManage={isAdmin} />}
         {active === 'Attendance' && <StudentAttendanceTab studentId={studentId} />}
+        {active === 'Academics' && <StudentAcademicsTab studentId={studentId} />}
       </div>
     </>
   );
@@ -665,6 +669,54 @@ function StudentAttendanceTab({ studentId }: { studentId: string }) {
           </CardBody>
         )}
       </Card>
+    </>
+  );
+}
+
+function StudentAcademicsTab({ studentId }: { studentId: string }) {
+  const history = useQuery({
+    queryKey: academicKeys.student(studentId),
+    queryFn: () => academicsApi.student(studentId),
+  });
+
+  if (history.isPending) return <LoadingBlock />;
+  if (history.error) return <ErrorBlock message={(history.error as Error).message} />;
+
+  const { years } = history.data;
+
+  if (years.length === 0) {
+    return (
+      <Card>
+        <CardHeader title="Academics" description="Exam marks, by session." />
+        <EmptyState
+          title="No marks recorded yet"
+          description="Marks entered on the Academics page will appear here."
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      {years.map((year) => (
+        <Card key={year.academicYear}>
+          <CardHeader
+            title={year.academicYear}
+            description={`${classLabel(year.classCode)}${year.rollNo === null ? '' : ` · Roll ${year.rollNo}`}`}
+          />
+          <CardBody>
+            <dl className="grid gap-5 sm:grid-cols-3">
+              {EXAM_CODES.map((code) => (
+                <Detail
+                  key={code}
+                  label={EXAM_LABELS[code]}
+                  value={year.scores[code] === null ? '—' : `${year.scores[code]!.toFixed(2)}%`}
+                />
+              ))}
+            </dl>
+          </CardBody>
+        </Card>
+      ))}
     </>
   );
 }

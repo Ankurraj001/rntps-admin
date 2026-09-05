@@ -1,7 +1,6 @@
 import {
   ATTENDANCE_LABELS,
   ATTENDANCE_SHORT,
-  ATTENDANCE_STATUSES,
   CLASS_CODES,
   TEACHERS_SCOPE,
   attendancePercentage,
@@ -24,6 +23,17 @@ import { Input, Select } from '@/components/ui/Field';
 import { cn } from '@/lib/utils';
 
 /**
+ * What a single row can be set to.
+ *
+ * Holiday is deliberately not here. A holiday is a property of the *day* — if the school
+ * is shut it is shut for everyone — so offering it per child invited a register where
+ * three students are on holiday and the rest are absent, which is not a thing that can
+ * happen and which the attendance percentage would then quietly compute around. It is
+ * set once for the whole register, from the top.
+ */
+const ROW_STATUSES = ['PRESENT', 'ABSENT'] as const satisfies readonly AttendanceStatus[];
+
+/**
  * Keyboard shortcut for each status, so a class can be marked without the mouse.
  *
  * Derived from `ATTENDANCE_SHORT` rather than written out, so the bound keys, the letters
@@ -31,10 +41,10 @@ import { cn } from '@/lib/utils';
  * had: the hint went on advertising keys for two statuses that no longer exist.
  */
 const SHORTCUT: Record<string, AttendanceStatus> = Object.fromEntries(
-  ATTENDANCE_STATUSES.map((status) => [ATTENDANCE_SHORT[status].toLowerCase(), status]),
+  ROW_STATUSES.map((status) => [ATTENDANCE_SHORT[status].toLowerCase(), status]),
 );
 
-const SHORTCUT_HINT = ATTENDANCE_STATUSES.map((status) => ATTENDANCE_SHORT[status]).join(', ');
+const SHORTCUT_HINT = ROW_STATUSES.map((status) => ATTENDANCE_SHORT[status]).join(', ');
 
 const TONE: Record<AttendanceStatus, string> = {
   PRESENT: 'bg-emerald-600 text-white',
@@ -145,6 +155,13 @@ export function MarkAttendancePage() {
     return { tally, working, percentage: attendancePercentage(tally.PRESENT, working) };
   }, [marks, entries.length]);
 
+  /**
+   * The register is on holiday when every row is. Derived rather than held in its own
+   * state so a roster loaded back from the database reads as a holiday too — the API
+   * stores a status per student and has no separate "this day was a holiday" flag.
+   */
+  const isHoliday = entries.length > 0 && entries.every((entry) => marks[entry.id] === 'HOLIDAY');
+
   function setStatus(studentId: string, status: AttendanceStatus) {
     setMarks((current) => ({ ...current, [studentId]: status }));
     setSaved(false);
@@ -160,7 +177,9 @@ export function MarkAttendancePage() {
     const entry = entries[index];
     if (!entry) return;
 
-    const status = SHORTCUT[event.key.toLowerCase()];
+    // While the whole day is a holiday there is nothing to mark per child; the way out
+    // is Clear holiday, not a keystroke that would silently break the register in half.
+    const status = isHoliday ? undefined : SHORTCUT[event.key.toLowerCase()];
     if (status) {
       event.preventDefault();
       setStatus(entry.id, status);
@@ -246,13 +265,26 @@ export function MarkAttendancePage() {
               />
             </label>
 
+            {/*
+              Holiday is set here, for the whole register, rather than on each row. When it
+              is on, "All present" would do the same job as clearing it, so only the one
+              button is offered and the choice stays unambiguous.
+            */}
             <div className="ml-auto flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={() => markAll('PRESENT')} disabled={isReadOnly}>
-                All present
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => markAll('HOLIDAY')} disabled={isReadOnly}>
-                Mark holiday
-              </Button>
+              {isHoliday ? (
+                <Button variant="secondary" size="sm" onClick={() => markAll('PRESENT')} disabled={isReadOnly}>
+                  Clear holiday
+                </Button>
+              ) : (
+                <>
+                  <Button variant="secondary" size="sm" onClick={() => markAll('PRESENT')} disabled={isReadOnly}>
+                    All present
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => markAll('HOLIDAY')} disabled={isReadOnly}>
+                    Mark holiday
+                  </Button>
+                </>
+              )}
             </div>
           </CardBody>
         </Card>
@@ -273,6 +305,16 @@ export function MarkAttendancePage() {
             <span>
               <strong>{active.data.holiday.label}</strong> is a school holiday. You can still mark
               attendance if the school was open.
+            </span>
+          </div>
+        )}
+
+        {isHoliday && !isSundayRoster && (
+          <div className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-3 text-sm text-slate-700">
+            <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
+            <span>
+              Marked as a <strong>holiday</strong> for the whole register — it does not count
+              toward anyone's attendance. Use <strong>Clear holiday</strong> to mark the day normally.
             </span>
           </div>
         )}
@@ -306,14 +348,24 @@ export function MarkAttendancePage() {
             <>
               <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-3 text-sm">
                 <span className="font-medium text-slate-700">{entries.length} students</span>
-                {ATTENDANCE_STATUSES.map((status) => (
-                  <span key={status} className="text-slate-600">
-                    {ATTENDANCE_LABELS[status]}: <strong>{counts.tally[status]}</strong>
-                  </span>
-                ))}
-                <Badge tone={counts.percentage >= 75 ? 'green' : 'amber'}>
-                  {counts.percentage}% present
-                </Badge>
+                {/*
+                  A holiday has no working days, so the percentage would read "0% present"
+                  and look like a catastrophic day rather than a closed school.
+                */}
+                {isHoliday ? (
+                  <Badge tone="slate">Holiday — not a working day</Badge>
+                ) : (
+                  <>
+                    {ROW_STATUSES.map((status) => (
+                      <span key={status} className="text-slate-600">
+                        {ATTENDANCE_LABELS[status]}: <strong>{counts.tally[status]}</strong>
+                      </span>
+                    ))}
+                    <Badge tone={counts.percentage >= 75 ? 'green' : 'amber'}>
+                      {counts.percentage}% present
+                    </Badge>
+                  </>
+                )}
               </div>
 
               <table className="w-full text-sm">
@@ -342,27 +394,38 @@ export function MarkAttendancePage() {
                       {!isStaff && <td className="px-5 py-2 tabular-nums text-slate-500">{entry.rollNo ?? '—'}</td>}
                       <td className="px-5 py-2 font-medium text-slate-900">{entry.name}</td>
                       <td className="px-5 py-2">
-                        <div className="flex gap-1">
-                          {ATTENDANCE_STATUSES.map((status) => {
-                            const chosen = marks[entry.id] === status;
-                            return (
-                              <button
-                                key={status}
-                                type="button"
-                                disabled={isReadOnly}
-                                aria-pressed={chosen}
-                                aria-label={`${entry.name}: ${ATTENDANCE_LABELS[status]}`}
-                                onClick={() => setStatus(entry.id, status)}
-                                className={cn(
-                                  'rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
-                                  chosen ? TONE[status] : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
-                                )}
-                              >
-                                {ATTENDANCE_LABELS[status]}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {/*
+                          Shown as a label, not a disabled button: there is no per-child
+                          holiday to toggle, so a row on a holiday states what it is and
+                          leaves the only real choice — the whole day — at the top.
+                        */}
+                        {isHoliday ? (
+                          <span className="text-xs font-medium text-slate-500">
+                            {ATTENDANCE_LABELS.HOLIDAY}
+                          </span>
+                        ) : (
+                          <div className="flex gap-1">
+                            {ROW_STATUSES.map((status) => {
+                              const chosen = marks[entry.id] === status;
+                              return (
+                                <button
+                                  key={status}
+                                  type="button"
+                                  disabled={isReadOnly}
+                                  aria-pressed={chosen}
+                                  aria-label={`${entry.name}: ${ATTENDANCE_LABELS[status]}`}
+                                  onClick={() => setStatus(entry.id, status)}
+                                  className={cn(
+                                    'rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                                    chosen ? TONE[status] : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                                  )}
+                                >
+                                  {ATTENDANCE_LABELS[status]}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
