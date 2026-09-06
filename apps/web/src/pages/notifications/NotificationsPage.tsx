@@ -1,27 +1,71 @@
-import { CLASS_CODES, classLabel, formatINR, toDateKey } from '@rntps/shared';
+import { CLASS_CODES, classLabel, formatINR, periodLabel, toDateKey } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, ExternalLink, MessageSquare, SkipForward } from 'lucide-react';
+import { AlertTriangle, Check, ExternalLink, MessageSquare, SkipForward, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { notificationKeys, notificationsApi } from '@/api/notifications';
+import { notificationKeys, notificationsApi, type BatchSummary } from '@/api/notifications';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input } from '@/components/ui/Field';
+import { Modal } from '@/components/ui/Modal';
 import { cn, displayPhone } from '@/lib/utils';
+
+/**
+ * How a batch's class filter reads back.
+ *
+ * An empty `classCodes` is not "no classes" but every class — the filter form treats
+ * nothing ticked as all — so it has to be spelled out rather than left blank, otherwise a
+ * whole-school run and a two-class run look identical in the history.
+ */
+function classFilterLabel(classCodes: string[] | undefined): string {
+  if (!classCodes?.length) return 'All classes';
+  return classCodes.map(classLabel).join(', ');
+}
+
+/** Every class named is eleven labels wide, so the badge shows a few and counts the rest. */
+const MAX_BADGE_CLASSES = 3;
+
+function classFilterBadgeLabel(classCodes: string[] | undefined): string {
+  if (!classCodes?.length) return 'All classes';
+  if (classCodes.length <= MAX_BADGE_CLASSES) return classFilterLabel(classCodes);
+  const shown = classCodes.slice(0, MAX_BADGE_CLASSES).map(classLabel).join(', ');
+  return `${shown} +${classCodes.length - MAX_BADGE_CLASSES}`;
+}
 
 export function NotificationsPage() {
   const queryClient = useQueryClient();
   const [batchId, setBatchId] = useState<string | null>(null);
 
-  const [period, setPeriod] = useState(toDateKey().slice(0, 7));
+  const currentMonth = toDateKey().slice(0, 7);
+  const [period, setPeriod] = useState(currentMonth);
   const [classCodes, setClassCodes] = useState<string[]>([]);
   const [minDueRupees, setMinDueRupees] = useState('1');
   const [overdueOnly, setOverdueOnly] = useState(false);
 
-  const history = useQuery({ queryKey: notificationKeys.all, queryFn: notificationsApi.list });
+  const [pendingDelete, setPendingDelete] = useState<BatchSummary | null>(null);
+
+  /**
+   * The history is filtered by the month a batch was *built* in, defaulting to this one:
+   * a month-end run is a dozen-odd batches, and every previous month's stay behind the
+   * filter rather than stacking up under the ones that still need working through.
+   */
+  const [historyMonth, setHistoryMonth] = useState(currentMonth);
+
+  const history = useQuery({
+    queryKey: notificationKeys.list(historyMonth),
+    queryFn: () => notificationsApi.list(historyMonth || undefined),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => notificationsApi.remove(id),
+    onSuccess: async () => {
+      setPendingDelete(null);
+      await queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -33,6 +77,9 @@ export function NotificationsPage() {
       }),
     onSuccess: async (batch) => {
       setBatchId(batch.id);
+      // A batch built now lands in this month, so a history left on an older month would
+      // send the admin back to a list the batch they just made is not in.
+      setHistoryMonth(currentMonth);
       await queryClient.invalidateQueries({ queryKey: notificationKeys.all });
     },
   });
@@ -46,7 +93,7 @@ export function NotificationsPage() {
         description="Builds one WhatsApp message per parent, covering all their children."
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         <Card className="border-amber-300 bg-amber-50">
           <CardBody className="flex items-start gap-3 text-sm text-amber-900">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -125,38 +172,137 @@ export function NotificationsPage() {
         </Card>
 
         <Card>
-          <CardHeader title="Previous batches" />
+          <CardHeader
+            title="Previous batches"
+            description={
+              historyMonth ? `Built in ${periodLabel(historyMonth)}` : 'Every month, most recent first'
+            }
+            action={
+              // Labelled by the header rather than a Field, which would stack a second
+              // heading on top of one. Blank is a real choice here, so it is spelled out.
+              <div className="flex items-center gap-2">
+                <Input
+                  type="month"
+                  className="w-40"
+                  aria-label="Month the batch was built in"
+                  value={historyMonth}
+                  onChange={(e) => setHistoryMonth(e.target.value)}
+                />
+                {historyMonth && (
+                  <Button variant="ghost" size="sm" onClick={() => setHistoryMonth('')}>
+                    All
+                  </Button>
+                )}
+              </div>
+            }
+          />
           {history.isPending && <LoadingBlock />}
+          {history.error && (
+            <CardBody>
+              <ErrorBlock message={(history.error as Error).message} />
+            </CardBody>
+          )}
           {history.data && history.data.items.length === 0 && (
             <CardBody>
-              <p className="py-4 text-center text-sm text-slate-500">No reminder batches yet.</p>
+              <p className="py-4 text-center text-sm text-slate-500">
+                {historyMonth
+                  ? `No reminder batches built in ${periodLabel(historyMonth)}.`
+                  : 'No reminder batches yet.'}
+              </p>
             </CardBody>
           )}
           {history.data && history.data.items.length > 0 && (
             <CardBody className="divide-y divide-slate-100">
+              {/* The row is a flex container rather than one big button, because a delete
+                  control nested inside a button is invalid markup and the inner click would
+                  open the batch it was meant to remove. */}
               {history.data.items.map((batch) => (
-                <button
-                  key={batch.id}
-                  type="button"
-                  onClick={() => setBatchId(batch.id)}
-                  className="flex w-full items-center justify-between gap-3 py-3 text-left text-sm first:pt-0 last:pb-0 hover:text-brand-700"
-                >
-                  <span>
-                    <span className="font-medium">{batch.filter.period ?? 'All unpaid months'}</span>
-                    <span className="ml-2 text-slate-500">
-                      {new Date(batch.createdAt).toLocaleString('en-IN')}
+                <div key={batch.id} className="flex items-center gap-2 py-3 first:pt-0 last:pb-0">
+                  <button
+                    type="button"
+                    onClick={() => setBatchId(batch.id)}
+                    className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-left text-sm hover:text-brand-700"
+                  >
+                    <span className="min-w-0">
+                      <span className="font-medium">{batch.filter.period ?? 'All unpaid months'}</span>
+                      <span className="ml-2 text-slate-500">
+                        {new Date(batch.createdAt).toLocaleString('en-IN')}
+                      </span>
                     </span>
-                  </span>
-                  <span className="text-slate-600">
-                    {batch.sentCount}/{batch.totalCount} sent
-                    {batch.skippedCount > 0 && ` · ${batch.skippedCount} skipped`}
-                  </span>
-                </button>
+                    <span className="flex items-center gap-2">
+                      {/* Full list on hover, since the badge only names the first few. */}
+                      <span title={classFilterLabel(batch.filter.classCodes)}>
+                        <Badge tone={batch.filter.classCodes?.length ? 'blue' : 'slate'}>
+                          {classFilterBadgeLabel(batch.filter.classCodes)}
+                        </Badge>
+                      </span>
+                      <span className="text-slate-600">
+                        {batch.sentCount}/{batch.totalCount} sent
+                        {batch.skippedCount > 0 && ` · ${batch.skippedCount} skipped`}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50"
+                    aria-label={`Delete batch from ${new Date(batch.createdAt).toLocaleString('en-IN')}`}
+                    title="Delete batch"
+                    disabled={remove.isPending}
+                    onClick={() => setPendingDelete(batch)}
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
               ))}
             </CardBody>
           )}
         </Card>
       </div>
+
+      {/* Confirmed rather than deleted on the spot: the delete sits one row-width from the
+          control that opens the batch, and what it destroys — which parents have already
+          been chased — cannot be rebuilt by running the filter again. */}
+      {pendingDelete && (
+        <Modal
+          open
+          onClose={() => setPendingDelete(null)}
+          title="Delete this reminder batch?"
+          description={`${pendingDelete.filter.period ?? 'All unpaid months'} · ${classFilterLabel(pendingDelete.filter.classCodes)}`}
+        >
+          <div className="space-y-3 px-5 py-4 text-sm text-slate-600">
+            <p>
+              Built {new Date(pendingDelete.createdAt).toLocaleString('en-IN')} ·{' '}
+              {pendingDelete.sentCount}/{pendingDelete.totalCount} marked sent
+              {pendingDelete.skippedCount > 0 && ` · ${pendingDelete.skippedCount} skipped`}.
+            </p>
+            <p>
+              The queue and its progress go for good. Invoices, payments and student records are
+              untouched — you can build a fresh batch from the same filters, but it will not
+              remember who was already messaged.
+            </p>
+            {remove.error && <ErrorBlock message={(remove.error as Error).message} />}
+          </div>
+          <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setPendingDelete(null)}
+              disabled={remove.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate(pendingDelete.id)}
+            >
+              {remove.isPending && <Spinner />}
+              Delete batch
+            </Button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -178,7 +324,7 @@ function QueueView({ batchId, onClose }: { batchId: string; onClose: () => void 
   });
 
   if (batch.isPending) return <LoadingBlock />;
-  if (batch.error) return <div className="p-6"><ErrorBlock message={(batch.error as Error).message} /></div>;
+  if (batch.error) return <div className="p-4 sm:p-6"><ErrorBlock message={(batch.error as Error).message} /></div>;
 
   const data = batch.data;
   const done = data.sentCount + data.skippedCount;
@@ -197,7 +343,7 @@ function QueueView({ batchId, onClose }: { batchId: string; onClose: () => void 
     <>
       <PageHeader
         title="Send reminders"
-        description={`${done} of ${data.totalCount} handled · ${data.filter.period ?? 'all unpaid months'}`}
+        description={`${done} of ${data.totalCount} handled · ${data.filter.period ?? 'all unpaid months'} · ${classFilterLabel(data.filter.classCodes)}`}
         action={
           <Button variant="secondary" onClick={onClose}>
             Back to filters
@@ -205,7 +351,7 @@ function QueueView({ batchId, onClose }: { batchId: string; onClose: () => void 
         }
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         <div className="h-2 overflow-hidden rounded-full bg-slate-200" role="progressbar" aria-valuenow={done} aria-valuemax={data.totalCount}>
           <div
             className="h-full rounded-full bg-brand-600 transition-all"

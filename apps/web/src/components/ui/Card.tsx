@@ -17,8 +17,10 @@ export function CardHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
-      <div>
+    // `flex-wrap` so a header with a control in it — a month picker, a status badge —
+    // drops the control under the title on a phone instead of squeezing both.
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-slate-200 px-5 py-4">
+      <div className="min-w-0">
         <h2 className="text-base font-semibold text-slate-900">{title}</h2>
         {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
       </div>

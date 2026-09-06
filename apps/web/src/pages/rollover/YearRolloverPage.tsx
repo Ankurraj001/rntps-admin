@@ -71,7 +71,7 @@ export function YearRolloverPage() {
   if (status.isPending) return <LoadingBlock />;
   if (status.error) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ErrorBlock message={(status.error as Error).message} />
       </div>
     );
@@ -89,7 +89,7 @@ export function YearRolloverPage() {
         description={`${from} → ${to} · every step is safe to run again`}
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         {data.notStarted && (
           <Card>
             <CardBody className="flex items-start gap-3 text-sm text-slate-700">

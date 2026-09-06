@@ -34,6 +34,22 @@ export const updateItemStatusSchema = z.object({
   status: z.enum(NOTIFICATION_ITEM_STATUSES),
 });
 
+/**
+ * History filter for the batch list.
+ *
+ * `month` is the IST month a batch was *built* in, not the fee month it chases. A run is a
+ * piece of work done on a day, and filing the history by fee month would have no shelf for
+ * a batch created without a `period` — "all unpaid months" is a legitimate filter and those
+ * batches would be invisible under every month.
+ *
+ * Omit it for every month, subject to the server's limit.
+ */
+export const listBatchesQuerySchema = z.object({
+  month: z.string().regex(PERIOD_PATTERN, 'Use the form 2026-08').optional(),
+});
+
+export type ListBatchesQuery = z.output<typeof listBatchesQuerySchema>;
+
 export type CreateBatchPayload = z.output<typeof createBatchSchema>;
 
 export interface NotificationItemDto {

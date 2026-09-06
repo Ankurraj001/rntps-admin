@@ -1,4 +1,4 @@
-import { buildWaLink, renderTemplate } from '@rntps/shared';
+import { buildWaLink, renderTemplate, toDateKey } from '@rntps/shared';
 import type { Express } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -18,6 +18,7 @@ const as = {
   post: (p: string) => request(app).post(p).set('Authorization', adminHeader),
   put: (p: string) => request(app).put(p).set('Authorization', adminHeader),
   patch: (p: string) => request(app).patch(p).set('Authorization', adminHeader),
+  del: (p: string) => request(app).delete(p).set('Authorization', adminHeader),
 };
 
 async function billClass(classCode: string) {
@@ -360,6 +361,121 @@ describe('resumable queue', () => {
     const res = await as.get('/api/v1/notifications').expect(200);
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0]).not.toHaveProperty('items');
+  });
+
+  // The history row is labelled from this snapshot, so an unfiltered run and a
+  // class-filtered one have to come back distinguishable.
+  it('narrows the history to the month a batch was built in', async () => {
+    await makeBatch();
+    const thisMonth = toDateKey().slice(0, 7);
+
+    const current = await as.get('/api/v1/notifications').query({ month: thisMonth }).expect(200);
+    expect(current.body.items).toHaveLength(1);
+
+    // A month the batch was not built in, whatever fee period it chases.
+    const other = await as.get('/api/v1/notifications').query({ month: '2020-01' }).expect(200);
+    expect(other.body.items).toHaveLength(0);
+
+    // Blank means every month.
+    const all = await as.get('/api/v1/notifications').expect(200);
+    expect(all.body.items).toHaveLength(1);
+  });
+
+  // The fee month and the month the run happened are different axes: this batch chases
+  // August while being built in whatever month the clock says.
+  it('files a batch by when it was built, not by the fee month it chases', async () => {
+    await makeBatch();
+
+    const byFeeMonth = await as.get('/api/v1/notifications').query({ month: PERIOD }).expect(200);
+    const byBuiltMonth = await as
+      .get('/api/v1/notifications')
+      .query({ month: toDateKey().slice(0, 7) })
+      .expect(200);
+
+    expect(byBuiltMonth.body.items).toHaveLength(1);
+    expect(byBuiltMonth.body.items[0].filter.period).toBe(PERIOD);
+    if (PERIOD !== toDateKey().slice(0, 7)) expect(byFeeMonth.body.items).toHaveLength(0);
+  });
+
+  it('rejects a malformed month rather than ignoring it', async () => {
+    await as.get('/api/v1/notifications').query({ month: 'August' }).expect(400);
+    await as.get('/api/v1/notifications').query({ month: '2026-13' }).expect(400);
+  });
+
+  it('carries the class filter back on a history row, and omits it when unfiltered', async () => {
+    await billClass('5');
+    await billClass('2');
+    await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await createStudent(studentInput({ fullName: 'Ishaan Verma', classCode: '2' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    await as.post('/api/v1/notifications').send({ period: PERIOD, classCodes: ['5'] }).expect(201);
+    await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
+
+    const res = await as.get('/api/v1/notifications').expect(200);
+    const [unfiltered, filtered] = res.body.items as { filter: { classCodes?: string[] } }[];
+
+    expect(filtered?.filter.classCodes).toEqual(['5']);
+    // Absent rather than empty: "all classes" is the reading, and an empty array reads as none.
+    expect(unfiltered?.filter).not.toHaveProperty('classCodes');
+  });
+});
+
+describe('DELETE /notifications/:batchId', () => {
+  async function makeBatch(classCodes?: string[]) {
+    await billClass('5');
+    await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    const res = await as
+      .post('/api/v1/notifications')
+      .send({ period: PERIOD, ...(classCodes ? { classCodes } : {}) })
+      .expect(201);
+    return res.body as { id: string; items: { key: string }[] };
+  }
+
+  it('removes the batch from the history and from a direct fetch', async () => {
+    const batch = await makeBatch();
+
+    await as.del(`/api/v1/notifications/${batch.id}`).expect(200, { deleted: true });
+
+    await as.get(`/api/v1/notifications/${batch.id}`).expect(404);
+    const list = await as.get('/api/v1/notifications').expect(200);
+    expect(list.body.items).toHaveLength(0);
+  });
+
+  it('deletes a part-worked queue, progress and all', async () => {
+    const batch = await makeBatch();
+    const key = batch.items[0]?.key as string;
+    await as.patch(`/api/v1/notifications/${batch.id}/items/${key}`).send({ status: 'SENT' }).expect(200);
+
+    await as.del(`/api/v1/notifications/${batch.id}`).expect(200);
+    await as.get(`/api/v1/notifications/${batch.id}`).expect(404);
+  });
+
+  // Deleting a batch must not touch what it was built from — it is a work list, not a ledger.
+  it('leaves the invoices it was built from untouched', async () => {
+    const batch = await makeBatch();
+    const before = await as.get('/api/v1/fees/invoices').query({ period: PERIOD }).expect(200);
+
+    await as.del(`/api/v1/notifications/${batch.id}`).expect(200);
+
+    const after = await as.get('/api/v1/fees/invoices').query({ period: PERIOD }).expect(200);
+    expect(after.body.items).toEqual(before.body.items);
+    expect(after.body.items.length).toBeGreaterThan(0);
+  });
+
+  it('404s an unknown batch and 404s a second delete', async () => {
+    const batch = await makeBatch();
+    await as.del(`/api/v1/notifications/${batch.id}`).expect(200);
+    await as.del(`/api/v1/notifications/${batch.id}`).expect(404);
+  });
+
+  it('is closed to teachers', async () => {
+    const batch = await makeBatch();
+    const { header } = await teacherAuth();
+    await request(app).delete(`/api/v1/notifications/${batch.id}`).set('Authorization', header).expect(403);
+    // Still there afterwards.
+    await as.get(`/api/v1/notifications/${batch.id}`).expect(200);
   });
 });
 

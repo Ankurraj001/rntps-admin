@@ -43,7 +43,7 @@ export function InvoiceDetailPage() {
   if (invoice.isPending) return <LoadingBlock />;
   if (invoice.error) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ErrorBlock message={(invoice.error as Error).message} />
         <Link to="/fees/invoices" className="mt-4 inline-block text-sm text-brand-700 underline">
           Back to invoices
@@ -61,7 +61,7 @@ export function InvoiceDetailPage() {
         title={data.studentName}
         description={`${classLabel(data.classCode)} · ${data.period} · due ${formatDate(data.dueDate)}`}
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link to="/fees/invoices">
               <Button variant="ghost">
                 <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -82,7 +82,7 @@ export function InvoiceDetailPage() {
         }
       />
 
-      <div className="grid gap-5 p-6 lg:grid-cols-3">
+      <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
           {reverse.error && <ErrorBlock message={(reverse.error as Error).message} />}
           {voidInvoice.error && <ErrorBlock message={(voidInvoice.error as Error).message} />}

@@ -39,7 +39,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-slate-50 p-6">
+    <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 pb-badge sm:p-6 sm:pb-badge">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <GraduationCap className="h-9 w-9 text-brand-600" aria-hidden />

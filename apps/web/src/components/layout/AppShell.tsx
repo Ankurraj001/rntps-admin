@@ -233,7 +233,11 @@ export function AppShell() {
           <span className="ml-auto text-xs text-slate-500">{isAdmin ? 'Admin' : 'Teacher'}</span>
         </header>
 
-        <main className="min-w-0 flex-1">
+        {/* `pb-badge` here rather than on each page: the clearance is a property of the
+            viewport the app is served into, not of any one screen, and a page added later
+            cannot forget it. Dropped for print, where the badge does not exist and the
+            reserved strip would only push a receipt onto a second sheet. */}
+        <main className="min-w-0 flex-1 pb-badge print:pb-0">
           <Outlet />
         </main>
       </div>
@@ -251,9 +255,11 @@ export function PageHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
+    <header className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
+      {/* `min-w-0` so a long description wraps inside the header instead of forcing the
+          whole row wider than the phone it is on. */}
+      <div className="min-w-0">
+        <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">{title}</h1>
         {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
       </div>
       {action}

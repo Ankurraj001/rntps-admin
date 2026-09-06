@@ -1,9 +1,9 @@
-import { createBatchSchema, updateItemStatusSchema } from '@rntps/shared';
+import { createBatchSchema, listBatchesQuerySchema, updateItemStatusSchema } from '@rntps/shared';
 import { Router } from 'express';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { recordAudit } from '../../lib/audit.js';
 import { currentUser, requireAuth, requireRole } from '../../middleware/auth.js';
-import { validate, validatedBody } from '../../middleware/validate.js';
+import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import * as service from './notifications.service.js';
 
 export const notificationRoutes = Router();
@@ -13,8 +13,9 @@ notificationRoutes.use(requireAuth(), requireRole('ADMIN'));
 
 notificationRoutes.get(
   '/',
-  asyncHandler(async (_req, res) => {
-    res.json({ items: await service.listBatches() });
+  validate(listBatchesQuerySchema, 'query'),
+  asyncHandler(async (req, res) => {
+    res.json({ items: await service.listBatches(validatedQuery(req, listBatchesQuerySchema)) });
   }),
 );
 
@@ -49,6 +50,30 @@ notificationRoutes.get(
   '/invoices/:invoiceId/whatsapp-link',
   asyncHandler(async (req, res) => {
     res.json(await service.buildInvoiceWaLink(String(req.params.invoiceId)));
+  }),
+);
+
+notificationRoutes.delete(
+  '/:batchId',
+  asyncHandler(async (req, res) => {
+    const removed = await service.deleteBatch(String(req.params.batchId));
+
+    // `before` carries the summary rather than just the id: the batch is hard-deleted, so
+    // this line is the only remaining trace that the run happened at all.
+    await recordAudit(req, {
+      action: 'notification-batch.delete',
+      entity: 'notification',
+      entityId: removed.id,
+      before: {
+        type: removed.type,
+        filter: removed.filter,
+        totalCount: removed.totalCount,
+        sentCount: removed.sentCount,
+        skippedCount: removed.skippedCount,
+      },
+    });
+
+    res.json({ deleted: true });
   }),
 );
 

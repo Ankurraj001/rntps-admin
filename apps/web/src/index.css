@@ -6,6 +6,21 @@
   --color-brand-500: oklch(0.58 0.16 255);
   --color-brand-600: oklch(0.51 0.17 255);
   --color-brand-700: oklch(0.44 0.15 255);
+
+  /*
+   * Clearance for the host's floating badge.
+   *
+   * Netlify serves a "Powered by Netlify" badge on its lower plans, fixed to the
+   * bottom-right of the viewport and injected outside React's tree — the app cannot move
+   * it, style it or opt out of it, and it does not exist in local development, so it can
+   * only be designed around. Left alone it sits on top of whatever the page ends with,
+   * which on a phone is routinely a Save button or an attendance PRESENT/ABSENT pair.
+   *
+   * Every scrolling surface reserves this much room below its content as `pb-badge`, so
+   * the badge always has empty space to land in. Generous on purpose: the badge's exact
+   * height is the host's to change, and the cost of overshooting is a little whitespace.
+   */
+  --spacing-badge: 4.5rem;
 }
 
 html,
@@ -17,6 +32,20 @@ body,
 body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
+
+/*
+ * Scroll containers hold their own screen-reader text.
+ *
+ * Tailwind's `.sr-only` is `position: absolute`, so with no positioned ancestor its
+ * containing block is the viewport — and `overflow` does not clip a descendant whose
+ * containing block sits outside the scroll container. A one-pixel "Actions" label in the
+ * last column of a wide table therefore escaped its `overflow-x-auto` wrapper and stretched
+ * the document to the table's full width, letting the whole app be swiped sideways off a
+ * phone screen while the table itself stayed neatly clipped.
+ *
+ * `relative` on the wrapper (applied at each call site) makes it the containing block, so
+ * the label is clipped along with everything else. Keep it on any new `overflow-*` wrapper.
+ */
 
 /* Keyboard focus stays visible everywhere — the roster and onboarding screens are
    driven mostly by keyboard. */

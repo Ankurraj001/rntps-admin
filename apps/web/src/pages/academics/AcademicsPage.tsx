@@ -101,7 +101,7 @@ export function AcademicsPage() {
         }
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         <Card>
           <div className="flex flex-wrap items-end gap-3 p-4">
             <div className="relative min-w-64 flex-1">
@@ -173,8 +173,8 @@ export function AcademicsPage() {
 
           {data && data.items.length > 0 && (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="relative overflow-x-auto">
+                <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <SortableHeader

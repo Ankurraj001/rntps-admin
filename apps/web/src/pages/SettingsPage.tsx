@@ -37,7 +37,7 @@ export function SettingsPage() {
   });
 
   if (isPending) return <LoadingBlock />;
-  if (error) return <div className="p-6"><ErrorBlock message={(error as Error).message} /></div>;
+  if (error) return <div className="p-4 sm:p-6"><ErrorBlock message={(error as Error).message} /></div>;
 
   function set<K extends keyof SettingsDto>(key: K, value: SettingsDto[K]) {
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -47,7 +47,7 @@ export function SettingsPage() {
     <>
       <PageHeader title="Settings" description="School-wide configuration." />
 
-      <div className="max-w-2xl space-y-5 p-6">
+      <div className="max-w-2xl space-y-5 p-4 sm:p-6">
         {mutation.error && <ErrorBlock message={(mutation.error as Error).message} />}
 
         <Card>

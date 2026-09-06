@@ -34,7 +34,7 @@ export function FeeSlipPage() {
   if (slip.isPending || settings.isPending || !settings.data) return <LoadingBlock />;
   if (slip.error)
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ErrorBlock message={(slip.error as Error).message} />
       </div>
     );
@@ -44,7 +44,7 @@ export function FeeSlipPage() {
     slip.data;
 
   return (
-    <div className="mx-auto max-w-2xl p-6">
+    <div className="mx-auto max-w-2xl p-4 sm:p-6">
       <div className="mb-4 flex justify-between print:hidden">
         <Link to={`/fees/invoices/${encodeURIComponent(invoiceId)}`}>
           <Button variant="ghost">

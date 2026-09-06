@@ -164,7 +164,7 @@ export function FeeStructuresPage() {
         }
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         {save.error && !(save.error instanceof ApiError && save.error.fieldErrors.length > 0) && (
           <ErrorBlock message={(save.error as Error).message} />
         )}

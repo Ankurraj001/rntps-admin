@@ -43,7 +43,7 @@ export function InvoiceRunPage() {
     <>
       <PageHeader title="Generate invoices" description="Preview first, then commit. Re-running a month is safe — it cannot double-bill." />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         {preview.error && <ErrorBlock message={(preview.error as Error).message} />}
         {commit.error && <ErrorBlock message={(commit.error as Error).message} />}
 
@@ -184,7 +184,7 @@ export function InvoiceRunPage() {
                 </p>
               ) : (
                 <div className="max-h-96 overflow-auto rounded-md border border-slate-200">
-                  <table className="w-full text-sm">
+                  <table className="min-w-full text-sm">
                     <thead className="sticky top-0 border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                       <tr>
                         <th scope="col" className="px-4 py-2 font-medium">Student</th>

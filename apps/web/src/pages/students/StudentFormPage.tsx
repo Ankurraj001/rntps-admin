@@ -189,7 +189,7 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
 
   if (mode === 'edit' && existing.isPending) return <LoadingBlock label="Loading student…" />;
   if (mode === 'edit' && existing.error) {
-    return <div className="p-6"><ErrorBlock message={(existing.error as Error).message} /></div>;
+    return <div className="p-4 sm:p-6"><ErrorBlock message={(existing.error as Error).message} /></div>;
   }
 
   const errors = form.formState.errors;
@@ -198,7 +198,7 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
     return (
       <>
         <PageHeader title="Student onboarded" />
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           <Card className="mx-auto max-w-lg">
             <CardBody className="space-y-4 text-center">
               <p className="text-sm text-slate-600">Saved with student ID</p>
@@ -243,7 +243,7 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
           setServerError(null);
           mutation.mutate(values);
         })}
-        className="mx-auto max-w-3xl space-y-5 p-6"
+        className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6"
       >
         {serverError && <ErrorBlock message={serverError} />}
 

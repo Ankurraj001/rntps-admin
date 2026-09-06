@@ -84,7 +84,7 @@ export function MonthlyAttendancePage() {
     <>
       <PageHeader title="Monthly attendance" description="One row per person, one column per day." />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         <Card>
           <div className="flex flex-wrap items-end gap-3 p-4">
             <label className="text-sm">
@@ -119,7 +119,7 @@ export function MonthlyAttendancePage() {
           )}
 
           {view && rows.length > 0 && (
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
               <table className="text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
                   <tr>

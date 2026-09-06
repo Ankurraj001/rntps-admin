@@ -207,7 +207,7 @@ export function MarkAttendancePage() {
         title="Mark attendance"
         description={`Everyone starts as present — mark the exceptions. Keys: ${SHORTCUT_HINT}.`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={() => save.mutate()}
               disabled={save.isPending || entries.length === 0 || isReadOnly}
@@ -236,7 +236,7 @@ export function MarkAttendancePage() {
         }
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         <Card>
           <CardBody className="flex flex-wrap items-end gap-3">
             <label className="text-sm">
@@ -368,69 +368,74 @@ export function MarkAttendancePage() {
                 )}
               </div>
 
-              <table className="w-full text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    {!isStaff && <th scope="col" className="w-16 px-5 py-3 font-medium">Roll</th>}
-                    <th scope="col" className="px-5 py-3 font-medium">Name</th>
-                    <th scope="col" className="px-5 py-3 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {entries.map((entry, index) => (
-                    <tr
-                      key={entry.id}
-                      ref={(node) => {
-                        rowRefs.current[index] = node;
-                      }}
-                      tabIndex={0}
-                      onFocus={() => setFocused(index)}
-                      onKeyDown={(event) => handleKeyDown(event, index)}
-                      className={cn(
-                        'outline-none',
-                        focused === index ? 'bg-brand-50' : 'hover:bg-slate-50',
-                      )}
-                    >
-                      {!isStaff && <td className="px-5 py-2 tabular-nums text-slate-500">{entry.rollNo ?? '—'}</td>}
-                      <td className="px-5 py-2 font-medium text-slate-900">{entry.name}</td>
-                      <td className="px-5 py-2">
-                        {/*
-                          Shown as a label, not a disabled button: there is no per-child
-                          holiday to toggle, so a row on a holiday states what it is and
-                          leaves the only real choice — the whole day — at the top.
-                        */}
-                        {isHoliday ? (
-                          <span className="text-xs font-medium text-slate-500">
-                            {ATTENDANCE_LABELS.HOLIDAY}
-                          </span>
-                        ) : (
-                          <div className="flex gap-1">
-                            {ROW_STATUSES.map((status) => {
-                              const chosen = marks[entry.id] === status;
-                              return (
-                                <button
-                                  key={status}
-                                  type="button"
-                                  disabled={isReadOnly}
-                                  aria-pressed={chosen}
-                                  aria-label={`${entry.name}: ${ATTENDANCE_LABELS[status]}`}
-                                  onClick={() => setStatus(entry.id, status)}
-                                  className={cn(
-                                    'rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
-                                    chosen ? TONE[status] : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
-                                  )}
-                                >
-                                  {ATTENDANCE_LABELS[status]}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </td>
+              {/* The roster is the one screen a teacher uses on a phone every morning, so it
+                  scrolls sideways rather than crushing the name column against the
+                  PRESENT/ABSENT pair. */}
+              <div className="relative overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      {!isStaff && <th scope="col" className="w-16 px-5 py-3 font-medium">Roll</th>}
+                      <th scope="col" className="px-5 py-3 font-medium">Name</th>
+                      <th scope="col" className="px-5 py-3 font-medium">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {entries.map((entry, index) => (
+                      <tr
+                        key={entry.id}
+                        ref={(node) => {
+                          rowRefs.current[index] = node;
+                        }}
+                        tabIndex={0}
+                        onFocus={() => setFocused(index)}
+                        onKeyDown={(event) => handleKeyDown(event, index)}
+                        className={cn(
+                          'outline-none',
+                          focused === index ? 'bg-brand-50' : 'hover:bg-slate-50',
+                        )}
+                      >
+                        {!isStaff && <td className="px-5 py-2 tabular-nums text-slate-500">{entry.rollNo ?? '—'}</td>}
+                        <td className="w-full whitespace-nowrap px-5 py-2 font-medium text-slate-900">{entry.name}</td>
+                        <td className="px-5 py-2">
+                          {/*
+                            Shown as a label, not a disabled button: there is no per-child
+                            holiday to toggle, so a row on a holiday states what it is and
+                            leaves the only real choice — the whole day — at the top.
+                          */}
+                          {isHoliday ? (
+                            <span className="text-xs font-medium text-slate-500">
+                              {ATTENDANCE_LABELS.HOLIDAY}
+                            </span>
+                          ) : (
+                            <div className="flex gap-1">
+                              {ROW_STATUSES.map((status) => {
+                                const chosen = marks[entry.id] === status;
+                                return (
+                                  <button
+                                    key={status}
+                                    type="button"
+                                    disabled={isReadOnly}
+                                    aria-pressed={chosen}
+                                    aria-label={`${entry.name}: ${ATTENDANCE_LABELS[status]}`}
+                                    onClick={() => setStatus(entry.id, status)}
+                                    className={cn(
+                                      'rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                                      chosen ? TONE[status] : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                                    )}
+                                  >
+                                    {ATTENDANCE_LABELS[status]}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </>
           )}
         </Card>

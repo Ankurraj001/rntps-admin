@@ -12,10 +12,12 @@ import {
   type FeeMessageChild,
   type FeeSlipMode,
   type InvoiceWaLinkDto,
+  type ListBatchesQuery,
   type NotificationBatchDto,
   type NotificationItemStatus,
 } from '@rntps/shared';
 import { AppError } from '../../lib/AppError.js';
+import { istMonthInstants } from '../../lib/dateRange.js';
 import { getSettings } from '../../lib/ids.js';
 import { Invoice, type InvoiceDoc } from '../../models/Invoice.js';
 import { Notification, type NotificationDoc, type NotificationItemSub } from '../../models/Notification.js';
@@ -376,12 +378,48 @@ export async function getBatch(batchId: string): Promise<NotificationBatchDto> {
   return toDto(doc);
 }
 
-export async function listBatches(limit = 20): Promise<Omit<NotificationBatchDto, 'items' | 'unreachable'>[]> {
-  const docs = await Notification.find().sort({ createdAt: -1 }).limit(limit).lean<NotificationDoc[]>();
-  return docs.map((doc) => {
-    const { items: _items, unreachable: _unreachable, ...rest } = toDto(doc);
-    return rest;
-  });
+/** A history row: everything but the queue itself, which is only fetched when opened. */
+export type NotificationBatchSummary = Omit<NotificationBatchDto, 'items' | 'unreachable'>;
+
+function toSummary(doc: NotificationDoc): NotificationBatchSummary {
+  const { items: _items, unreachable: _unreachable, ...rest } = toDto(doc);
+  return rest;
+}
+
+/**
+ * The batch history, newest first, optionally narrowed to the IST month a run was built in.
+ *
+ * Filtered on `createdAt` rather than `filterSnapshot.period` — see `listBatchesQuerySchema`
+ * for why the fee month is the wrong axis. The half-open range is what the existing
+ * `{ createdAt: -1 }` index serves, so narrowing the list does not cost a collection scan.
+ */
+export async function listBatches(
+  query: ListBatchesQuery = {},
+  limit = 20,
+): Promise<NotificationBatchSummary[]> {
+  const filter: Record<string, unknown> = {};
+  if (query.month) {
+    const { start, end } = istMonthInstants(query.month);
+    filter.createdAt = { $gte: start, $lt: end };
+  }
+
+  const docs = await Notification.find(filter).sort({ createdAt: -1 }).limit(limit).lean<NotificationDoc[]>();
+  return docs.map(toSummary);
+}
+
+/**
+ * Deletes a batch outright, queue progress included.
+ *
+ * Safe to hard-delete because a batch references other records but nothing references it:
+ * the invoices, students and payments it was built from are untouched, and `sentAt` here
+ * never meant more than "the admin ticked it" — wa.me reports no delivery. What is lost is
+ * the record of which parents have already been chased, which is why the summary goes to
+ * the audit log on the way out.
+ */
+export async function deleteBatch(batchId: string): Promise<NotificationBatchSummary> {
+  const removed = await Notification.findByIdAndDelete(batchId).lean<NotificationDoc>();
+  if (!removed) throw AppError.notFound('Notification batch not found');
+  return toSummary(removed);
 }
 
 /**

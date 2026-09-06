@@ -30,7 +30,10 @@ export function ReportsPage() {
     <>
       <PageHeader title="Reports" description="Export any of these as CSV for the office records." />
 
-      <div className="border-b border-slate-200 bg-white px-6">
+      {/* Four tabs are wider than a phone, so the strip scrolls rather than pushing the
+          whole page sideways. `shrink-0` stops flex from compressing them into each other
+          instead of overflowing, which is what makes the scroll happen at all. */}
+      <div className="relative overflow-x-auto border-b border-slate-200 bg-white px-4 sm:px-6">
         <nav className="flex gap-1" role="tablist">
           {TABS.map((name) => (
             <button
@@ -39,7 +42,7 @@ export function ReportsPage() {
               aria-selected={tab === name}
               onClick={() => setTab(name)}
               className={cn(
-                '-mb-px border-b-2 px-4 py-3 text-sm font-medium',
+                '-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium sm:px-4',
                 tab === name ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800',
               )}
             >
@@ -49,7 +52,7 @@ export function ReportsPage() {
         </nav>
       </div>
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         {tab === 'Dues' && <DuesReport />}
         {tab === 'Collection' && <CollectionReport />}
         {tab === 'Expenses' && <ExpensesReport />}
@@ -114,8 +117,8 @@ function DuesReport() {
             {dues.data.rows.length === 0 ? (
               <EmptyState title="Nothing outstanding" description="Every invoice is settled." />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="relative overflow-x-auto">
+                <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th scope="col" className="px-5 py-3 font-medium">Student</th>
@@ -235,8 +238,8 @@ function CollectionReport() {
             {collection.data.rows.length === 0 ? (
               <EmptyState title="No payments in this range" />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="relative overflow-x-auto">
+                <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th scope="col" className="px-5 py-3 font-medium">Receipt</th>
@@ -664,8 +667,8 @@ function AttendanceReport() {
           {defaulters.data.items.length === 0 ? (
             <EmptyState title="Nobody below the threshold" />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="relative overflow-x-auto">
+              <table className="min-w-full text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th scope="col" className="px-5 py-3 font-medium">Student</th>

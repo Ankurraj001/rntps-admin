@@ -44,7 +44,7 @@ export function ChangePasswordPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-slate-50 p-6">
+    <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 pb-badge sm:p-6 sm:pb-badge">
       <div className="w-full max-w-md">
         <Card>
           <CardHeader

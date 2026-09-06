@@ -363,6 +363,16 @@ three children gets one message rather than three. Each child's bill is **itemis
 head and charge, then the adjustments — and arrears are carried in. Resumable: progress is stored
 server-side.
 
+The batch history labels each run with the classes it was built for — "All classes" when none were
+ticked, since the filter form reads nothing ticked as everything — and is filtered to the current month
+by default, so a month-end run's dozen batches do not stack up behind the ones still being worked
+through. That filter is on the month a batch was **built**, not the fee month it chases: a batch built
+with no period covers all unpaid months and so has no fee month to file it under. Clear the month to
+see every batch. A run can also be deleted outright.
+The delete is a hard one: a batch is a work list, not a ledger, so the invoices, payments and student
+records behind it are untouched, but the record of which parents have already been chased is gone and
+cannot be rebuilt by re-running the same filter. The summary goes to `auditLogs` on the way out.
+
 **Reports** — dues with aging buckets, collection by date range and mode, attendance defaulters. Each
 exports to CSV.
 
@@ -449,7 +459,9 @@ A     POST   /fees/invoices/:invoiceId/void
 A     GET    /fees/students/:studentId/invoices
 
 A     GET|POST /notifications                      build a reminder batch
+A     GET    /notifications?month=YYYY-MM           history, by the month a batch was built
 A     GET    /notifications/:batchId
+A     DELETE /notifications/:batchId                 hard delete, queue progress and all
 A     PATCH  /notifications/:batchId/items/:itemKey  queue progress
 
 A/T   GET    /reports/dashboard                   also carries the school name + academic year
@@ -489,6 +501,16 @@ in production; `CORS_ORIGINS` only matters for local dev, where the two run on d
 
 The handler lives in the api workspace rather than in `netlify/functions` so it is typechecked,
 linted and tested with the rest of the backend.
+
+**The "Powered by Netlify" badge.** Netlify serves it on its lower plans, fixed to the bottom-right
+of the viewport and injected outside React's tree — the app cannot move it, style it or opt out, and
+it does not exist in local development, so it can only be designed around. Every scrolling surface
+therefore ends with `pb-badge` (`--spacing-badge` in `apps/web/src/index.css`, 4.5rem) to reserve
+room for it: `<main>` in `AppShell` covers every page inside the shell, and the four screens rendered
+outside it — login, forgot/reset password, change password — carry it themselves. Without it the
+badge lands on whatever the page ends with, which on a phone is routinely a Save button or an
+attendance PRESENT/ABSENT pair. Keep the class on any new full-height surface; drop it (`print:pb-0`)
+wherever the page is printed, since the badge is not.
 
 ### First deploy
 

@@ -56,7 +56,7 @@ export function UsersPage() {
         }
       />
 
-      <div className="space-y-5 p-6">
+      <div className="space-y-5 p-4 sm:p-6">
         {mutationError && <ErrorBlock message={(mutationError as Error).message} />}
 
         {handover && <HandoverCard handover={handover} onDismiss={() => setHandover(null)} />}
@@ -87,8 +87,8 @@ export function UsersPage() {
           {users.error && <div className="p-4"><ErrorBlock message={(users.error as Error).message} /></div>}
 
           {users.data && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="relative overflow-x-auto">
+              <table className="min-w-full text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th scope="col" className="px-5 py-3 font-medium">Name</th>

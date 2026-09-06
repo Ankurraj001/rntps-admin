@@ -32,12 +32,12 @@ export function ReceiptPage() {
   }, [receiptNo]);
 
   if (invoice.isPending || settings.isPending || !settings.data) return <LoadingBlock />;
-  if (invoice.error) return <div className="p-6"><ErrorBlock message={(invoice.error as Error).message} /></div>;
+  if (invoice.error) return <div className="p-4 sm:p-6"><ErrorBlock message={(invoice.error as Error).message} /></div>;
 
   const payment = invoice.data.payments.find((p) => p.receiptNo === receiptNo);
   if (!payment) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ErrorBlock message={`No payment found with receipt ${receiptNo}`} />
       </div>
     );
@@ -47,7 +47,7 @@ export function ReceiptPage() {
   const data = invoice.data;
 
   return (
-    <div className="mx-auto max-w-2xl p-6">
+    <div className="mx-auto max-w-2xl p-4 sm:p-6">
       <div className="mb-4 flex justify-between print:hidden">
         <Link to={`/fees/invoices/${encodeURIComponent(invoiceId)}`}>
           <Button variant="ghost">

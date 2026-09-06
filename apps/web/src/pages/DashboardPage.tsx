@@ -52,7 +52,7 @@ export function DashboardPage() {
         }
       />
 
-      <div className="space-y-5 p-6">
+      <div className="space-y-5 p-4 sm:p-6">
         {dashboard.isPending && <LoadingBlock />}
         {dashboard.error && (
           <ErrorBlock message={(dashboard.error as Error).message} onRetry={() => void dashboard.refetch()} />

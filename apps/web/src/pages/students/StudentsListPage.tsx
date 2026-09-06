@@ -64,7 +64,7 @@ export function StudentsListPage() {
         }
       />
 
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         <Card>
           <div className="flex flex-wrap items-end gap-3 p-4">
             <div className="relative min-w-64 flex-1">
@@ -132,8 +132,8 @@ export function StudentsListPage() {
 
           {data && data.items.length > 0 && (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="relative overflow-x-auto">
+                <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th scope="col" className="px-5 py-3 font-medium">Student ID</th>
@@ -154,7 +154,7 @@ export function StudentsListPage() {
                       const primary = student.guardians.find((g) => g.isPrimary) ?? student.guardians[0];
                       return (
                         <tr key={student.studentId} className="hover:bg-slate-50">
-                          <td className="px-5 py-3 font-mono text-xs text-slate-500">
+                          <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-slate-500">
                             <Link to={`/students/${student.studentId}`} className="hover:text-brand-700 hover:underline">
                               {student.studentId}
                             </Link>

@@ -59,7 +59,7 @@ export function StudentDetailPage() {
   if (student.isPending) return <LoadingBlock label="Loading student…" />;
   if (student.error) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <ErrorBlock
           message={(student.error as Error).message}
           onRetry={() => void student.refetch()}
@@ -79,7 +79,7 @@ export function StudentDetailPage() {
         title={data.fullName}
         description={`${data.studentId} · ${classLabel(data.classCode)}${data.rollNo ? ` · Roll ${data.rollNo}` : ''}`}
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link to="/students">
               <Button variant="ghost">
                 <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -98,7 +98,9 @@ export function StudentDetailPage() {
         }
       />
 
-      <div className="border-b border-slate-200 bg-white px-6">
+      {/* Same as the Reports tabs: the strip scrolls on a phone rather than dragging the
+          page sideways with it. */}
+      <div className="relative overflow-x-auto border-b border-slate-200 bg-white px-4 sm:px-6">
         <nav className="flex gap-1" role="tablist">
           {tabs.map((name) => (
             <button
@@ -107,7 +109,7 @@ export function StudentDetailPage() {
               aria-selected={active === name}
               onClick={() => setTab(name)}
               className={cn(
-                '-mb-px border-b-2 px-4 py-3 text-sm font-medium',
+                '-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium sm:px-4',
                 active === name
                   ? 'border-brand-600 text-brand-700'
                   : 'border-transparent text-slate-500 hover:text-slate-800',
@@ -119,7 +121,7 @@ export function StudentDetailPage() {
         </nav>
       </div>
 
-      <div className="space-y-5 p-6">
+      <div className="space-y-5 p-4 sm:p-6">
         {active === 'Profile' && <ProfileTab student={data} canEdit={isAdmin} />}
         {active === 'Family' && (
           <FamilyTab
