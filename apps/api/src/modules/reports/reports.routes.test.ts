@@ -1,10 +1,16 @@
-import { toDateKey } from '@rntps/shared';
 import type { Express } from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../app.js';
 import { toCsv } from '../../lib/csv.js';
-import { adminAuth, seedSettings, studentInput, teacherAuth } from '../../test/factories.js';
+import {
+  A_WORKING_MONDAY,
+  adminAuth,
+  freezeToWorkingDay,
+  seedSettings,
+  studentInput,
+  teacherAuth,
+} from '../../test/factories.js';
 import { createStudent } from '../students/student.service.js';
 
 let app: Express;
@@ -274,6 +280,11 @@ describe('GET /reports/collection', () => {
 });
 
 describe('GET /reports/dashboard', () => {
+  // The dashboard has no date parameter — it always reports on `toDateKey()`, and on a
+  // holiday it correctly finds nothing marked and nothing unmarked. The clock is pinned
+  // around the request only, never around the seeding above it.
+  afterEach(() => vi.useRealTimers());
+
   it('summarises students, attendance, collection and dues in one call', async () => {
     const student = await billAndInvoice('5', 'Aarav Sharma');
     await request(app)
@@ -281,13 +292,12 @@ describe('GET /reports/dashboard', () => {
       .set('Authorization', adminHeader)
       .send({
         classCode: '5',
-        // IST, not UTC. The dashboard's "today" is toDateKey(), so a UTC date makes this
-        // test fail between 00:00 and 05:30 IST, when the two calendars disagree.
-        dateKey: toDateKey(),
+        dateKey: A_WORKING_MONDAY,
         marks: [{ studentId: student.studentId, status: 'PRESENT' }],
       })
       .expect(200);
 
+    freezeToWorkingDay();
     const res = await as.get('/api/v1/reports/dashboard').expect(200);
 
     expect(res.body.activeStudents).toBe(1);
@@ -298,8 +308,21 @@ describe('GET /reports/dashboard', () => {
 
   it('lists classes with nothing marked today', async () => {
     await createStudent(studentInput({ fullName: 'Unmarked Kid', classCode: '7' }));
+
+    freezeToWorkingDay();
     const res = await as.get('/api/v1/reports/dashboard').expect(200);
     expect(res.body.today.unmarkedClasses).toEqual(['7']);
+  });
+
+  it('says nothing is unmarked on a declared school holiday', async () => {
+    await createStudent(studentInput({ fullName: 'Unmarked Kid', classCode: '7' }));
+    await as.post('/api/v1/attendance/holiday').send({ dateKey: A_WORKING_MONDAY, label: 'Diwali' }).expect(200);
+
+    freezeToWorkingDay();
+    const res = await as.get('/api/v1/reports/dashboard').expect(200);
+
+    expect(res.body.today.unmarkedClasses).toEqual([]);
+    expect(res.body.today.holiday).toEqual({ dateKey: A_WORKING_MONDAY, label: 'Diwali' });
   });
 
   it('counts students with no reachable WhatsApp guardian', async () => {

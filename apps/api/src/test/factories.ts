@@ -6,7 +6,29 @@ import {
   type CreateStudentPayload,
   type ListStudentsQuery,
 } from '@rntps/shared';
+import { vi } from 'vitest';
 import { SETTINGS_ID, Settings } from '../models/Settings.js';
+
+/** A Monday, so nothing about it is a holiday. Shared with the attendance suites. */
+export const A_WORKING_MONDAY = '2026-08-24';
+
+/**
+ * Pins the clock to a working day, for the endpoints that take no date and so always ask
+ * about `toDateKey()` — the dashboard and the unmarked-classes nudge.
+ *
+ * Both correctly report nothing on a holiday, so a suite that leaves the real clock in
+ * place passes or fails depending on which day of the week it runs; these assertions were
+ * quietly breaking every Sunday.
+ *
+ * Call it immediately before the request being asserted and never around a write: the
+ * mocked Date is not the Date the BSON serialiser recognises, so a document created while
+ * the clock is frozen comes back with a `createdAt` that is no longer a Date. Seed first,
+ * freeze second. `vi.useRealTimers()` undoes it.
+ */
+export function freezeToWorkingDay(dateKey: string = A_WORKING_MONDAY): void {
+  // Midday IST, so the IST and UTC calendar days agree and the frozen day is unambiguous.
+  vi.setSystemTime(new Date(`${dateKey}T06:30:00Z`));
+}
 
 export async function seedSettings(overrides: Record<string, unknown> = {}) {
   return Settings.create({

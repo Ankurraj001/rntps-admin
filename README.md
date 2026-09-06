@@ -438,6 +438,8 @@ A     GET    /attendance/staff/roster?dateKey      the teacher register
 A     PUT    /attendance/staff/roster              only an admin marks teachers
 A/T   GET    /attendance/staff/monthly?month       read-only, whole register
 A     GET    /attendance/defaulters?month&threshold
+A     POST   /attendance/holiday                   closes every class and the teacher register
+A     DELETE /attendance/holiday?dateKey           reopens a declared day; Sundays cannot be cleared
 A/T   GET    /attendance/unmarked                  scoped to the caller's classes
 A/T   GET    /attendance/student/:studentId
 
@@ -892,7 +894,7 @@ names and phone numbers are redacted. The frontend has an error boundary in
 into its `componentDidCatch` if you want these off the user's machine. Nothing is wired to a
 third-party service by default.
 
-## Attendance: three states, and Sundays
+## Attendance: three states, Sundays and school holidays
 
 A child was either in school or not; a holiday is not a school day at all. That is the whole model —
 `PRESENT`, `ABSENT`, `HOLIDAY`. *Late* and *leave* were removed: they asked the teacher marking thirty
@@ -911,6 +913,31 @@ Deriving rather than storing is what makes this safe to introduce on a live data
 to **every past date with no backfill**, and a mark saved on a Sunday before the rule existed is
 ignored rather than left to quietly drag a percentage down. `sunday.test.ts` covers that case
 explicitly.
+
+### A declared school holiday follows exactly the same rules
+
+Diwali, Holi, a sudden closure — an admin declares the day once and it closes **every class and the
+teacher register at the same moment**. `POST /api/v1/attendance/holiday` takes a `dateKey` and a
+label and nothing else: there is deliberately no `classCode`, because a holiday is a property of the
+*day*. A single class that did not run is marked `HOLIDAY` on its own roster instead.
+
+It is stored as one entry on the settings document — **not** as an attendance record per child. That
+is the same derived-not-stored choice Sunday makes, and it buys the same things:
+
+- A child enrolled *after* the day was declared still sees it as a holiday.
+- Undoing it is one `$pull`, not deleting a document per student.
+- Marks saved *before* the day was declared stop being counted, rather than half a register reading
+  as absent on a day the school was shut.
+
+That last point is the one visible consequence, so the dashboard states it before the button is
+pressed when the day already has marks. `isNonWorkingDay()` is the single question every reader asks —
+roster, save guard, monthly grid, per-student history, defaulters and the dashboard nudge all route
+through it, so the calendar cannot mean one thing in the grid and another in the report.
+
+Two surfaces declare a holiday, both admin-only and both hitting the same endpoint: **Mark holiday**
+on the dashboard's unmarked-attendance banner (today only, with an Undo while it stands), and the
+**School holidays** card in Settings for planning the year and correcting past entries. Declaring a
+Sunday is rejected — it already is one. `holiday.test.ts` covers the rules above.
 
 ### Teachers are on the same register, in their own collection
 
@@ -935,8 +962,9 @@ One known limit: the roster and the grid both list *active* teachers, so a teach
 drops out of that month's grid, exactly as an INACTIVE student does. Their rows are still in the
 collection; unlike a student, there is no per-person page to reach them from.
 
-A school that opens on a particular Sunday cannot record it. If that comes up, the fix is a per-date
-override in Settings' holiday list rather than loosening the rule.
+A school that opens on a particular Sunday cannot record it. Settings' holiday list only adds
+closures, never removes the Sunday rule; if that comes up, the fix is a per-date override there rather
+than loosening the rule.
 
 Any `LATE` or `LEAVE` records left in the database are converted by
 `npm run migrate:rupees --workspace @rntps/api` — LATE to PRESENT (the child was in school), LEAVE to

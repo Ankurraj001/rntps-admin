@@ -654,20 +654,39 @@ function StudentAttendanceTab({ studentId }: { studentId: string }) {
           />
         ) : (
           <CardBody className="divide-y divide-slate-100">
-            {records.map((record) => (
-              <div
-                key={record.dateKey}
-                className="flex items-center justify-between py-2 text-sm first:pt-0 last:pb-0"
-              >
-                <span className="text-slate-700">{formatDate(record.dateKey)}</span>
-                <span className="flex items-center gap-3">
-                  {record.remarks && (
-                    <span className="text-xs text-slate-500">{record.remarks}</span>
+            {records.map((record) => {
+              // A day missed is the one row anybody scans this list for, so it is tinted
+              // as well as labelled. The label still carries the meaning on its own —
+              // colour alone would say nothing to a screen reader or a mono printout.
+              const absent = record.status === 'ABSENT';
+              return (
+                <div
+                  key={record.dateKey}
+                  className={cn(
+                    // Bled out past the card's padding and back in again, so the tint
+                    // spans the whole row while the text stays aligned with its neighbours.
+                    // Padding is uniform rather than trimmed on the first and last row —
+                    // a tinted band with one side flattened reads as a rendering fault.
+                    '-mx-2 flex items-center justify-between rounded px-2 py-2 text-sm',
+                    absent && 'bg-red-50',
                   )}
-                  <span className="font-medium text-slate-900">{record.status.toLowerCase()}</span>
-                </span>
-              </div>
-            ))}
+                >
+                  <span className={absent ? 'text-red-900' : 'text-slate-700'}>
+                    {formatDate(record.dateKey)}
+                  </span>
+                  <span className="flex items-center gap-3">
+                    {record.remarks && (
+                      <span className={cn('text-xs', absent ? 'text-red-700' : 'text-slate-500')}>
+                        {record.remarks}
+                      </span>
+                    )}
+                    <span className={cn('font-medium', absent ? 'text-red-900' : 'text-slate-900')}>
+                      {record.status}
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
           </CardBody>
         )}
       </Card>

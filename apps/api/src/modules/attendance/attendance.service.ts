@@ -1,5 +1,6 @@
 import {
   ATTENDANCE_STATUSES,
+  MAX_HOLIDAYS,
   SUNDAY_HOLIDAY_LABEL,
   attendancePercentage,
   countsAsWorkingDay,
@@ -9,6 +10,7 @@ import {
   type AttendanceStatus,
   type AttendanceTotals,
   type ClassCode,
+  type Holiday,
   type MonthlyResponse,
   type MonthlyRow,
   type RosterResponse,
@@ -18,6 +20,7 @@ import { AppError } from '../../lib/AppError.js';
 import { dateKeysInMonth, monthBounds } from '../../lib/dateRange.js';
 import { getSettings } from '../../lib/ids.js';
 import { Attendance, attendanceId, type AttendanceDoc } from '../../models/Attendance.js';
+import { SETTINGS_ID, Settings, type SettingsDoc } from '../../models/Settings.js';
 import { Student, type StudentDoc } from '../../models/Student.js';
 
 type RosterStudent = Pick<StudentDoc, '_id' | 'fullName' | 'rollNo'>;
@@ -68,9 +71,10 @@ export async function getRoster(classCode: ClassCode, dateKey: string): Promise<
         studentId: student._id,
         fullName: student.fullName,
         rollNo: student.rollNo,
-        // On a Sunday the stored value is irrelevant — the day is a holiday for everyone.
-        status: sunday ? ('HOLIDAY' as const) : (mark?.status ?? null),
-        remarks: sunday ? '' : (mark?.remarks ?? ''),
+        // On any holiday the stored value is irrelevant — the day is closed for everyone,
+        // so a mark saved before the holiday was declared cannot show through here.
+        status: holiday ? ('HOLIDAY' as const) : (mark?.status ?? null),
+        remarks: holiday ? '' : (mark?.remarks ?? ''),
       };
     }),
   };
@@ -89,10 +93,12 @@ export async function saveRoster(
   if (payload.dateKey > toDateKey()) {
     throw AppError.badRequest('Attendance cannot be marked for a future date');
   }
-  // Refused rather than accepted-and-ignored. Sundays read as a holiday whatever is
+  // Refused rather than accepted-and-ignored. A holiday reads as a holiday whatever is
   // stored, so saving marks here would look like it worked and silently mean nothing.
-  if (isSunday(payload.dateKey)) {
-    throw AppError.badRequest('Sunday is a holiday — attendance is not marked');
+  const settings = await getSettings();
+  const holiday = holidayFor(payload.dateKey, settings.holidays);
+  if (holiday) {
+    throw AppError.badRequest(`${holiday.label} is a holiday — attendance is not marked`);
   }
 
   const roll = await activeStudentsIn(payload.classCode);
@@ -165,6 +171,68 @@ export function holidayFor(
 }
 
 /**
+ * Whether the school was closed on a day, and so whether anything can be marked for it.
+ *
+ * The single question every reader asks — `isSunday` alone was that question until school
+ * holidays became declarable, and leaving the two spellings side by side is how one call
+ * site ends up still asking the narrower one.
+ */
+export function isNonWorkingDay(dateKey: string, declared: Holiday[]): boolean {
+  return holidayFor(dateKey, declared) !== null;
+}
+
+/**
+ * Declares one day a school holiday, closing every class and the teacher register at once.
+ *
+ * Two conditional writes rather than a read-modify-write of the array: two admins pressing
+ * the dashboard button together would otherwise each save the array they read and one would
+ * lose. Re-declaring a day renames it instead of adding a second entry, which is what makes
+ * the button safe to press twice.
+ */
+export async function declareHoliday(dateKey: string, label: string): Promise<Holiday[]> {
+  if (isSunday(dateKey)) {
+    throw AppError.badRequest('Sunday is already a holiday for the whole school');
+  }
+
+  const renamed = await Settings.findOneAndUpdate(
+    { _id: SETTINGS_ID, 'holidays.dateKey': dateKey },
+    { $set: { 'holidays.$.label': label } },
+    { returnDocument: 'after' },
+  ).lean<SettingsDoc>();
+  if (renamed) return renamed.holidays;
+
+  // Checked only on the path that grows the array, so renaming an existing holiday still
+  // works once the calendar is full.
+  const settings = await getSettings();
+  if (settings.holidays.length >= MAX_HOLIDAYS) {
+    throw AppError.badRequest(`At most ${MAX_HOLIDAYS} school holidays can be declared`);
+  }
+
+  const added = await Settings.findOneAndUpdate(
+    { _id: SETTINGS_ID, 'holidays.dateKey': { $ne: dateKey } },
+    { $push: { holidays: { dateKey, label } } },
+    { returnDocument: 'after' },
+  ).lean<SettingsDoc>();
+  // Null means another request declared the same day in between — the state we wanted.
+  return added ? added.holidays : (await getSettings()).holidays;
+}
+
+/** Reopens a declared holiday. Sundays are derived, so there is nothing there to clear. */
+export async function clearHoliday(dateKey: string): Promise<Holiday[]> {
+  if (isSunday(dateKey)) {
+    throw AppError.badRequest('Sunday is a holiday for the whole school and cannot be cleared');
+  }
+
+  const updated = await Settings.findOneAndUpdate(
+    { _id: SETTINGS_ID },
+    { $pull: { holidays: { dateKey } } },
+    { returnDocument: 'after' },
+  ).lean<SettingsDoc>();
+  if (!updated) throw new AppError(500, 'Settings have not been initialised', 'NO_SETTINGS');
+  return updated.holidays;
+}
+
+/**
  * dateKey -> holiday label for a month: every Sunday, then any declared school holiday.
  *
  * Sundays are derived rather than stored, so the rule reaches every past date with no
@@ -214,17 +282,18 @@ export async function getMonthly(classCode: ClassCode, month: string): Promise<M
     const totals = emptyTotals();
     const days: Record<string, string> = {};
 
-    // Every Sunday in the month reads as a holiday whether or not anything was recorded,
-    // so an old stray mark cannot quietly count toward the percentage.
+    // Every holiday in the month reads as one whether or not anything was recorded, so an
+    // old stray mark cannot quietly count toward the percentage. `holidays` already merges
+    // Sundays with the declared calendar, so both arrive here by the same route.
     for (const dateKey of allDateKeys) {
-      if (isSunday(dateKey)) {
+      if (holidays[dateKey]) {
         days[dateKey] = 'HOLIDAY';
         addToTotals(totals, 'HOLIDAY');
       }
     }
 
     for (const record of byStudent.get(student._id) ?? []) {
-      if (isSunday(record.dateKey)) continue;
+      if (holidays[record.dateKey]) continue;
       days[record.dateKey] = record.status;
       addToTotals(totals, record.status);
     }
@@ -253,10 +322,13 @@ export async function getStudentAttendance(
     };
   }
 
-  const stored = await Attendance.find(filter).sort({ dateKey: -1 }).lean<AttendanceDoc[]>();
-  // A Sunday is a holiday regardless of what was recorded, so a stray old mark cannot
+  const [stored, settings] = await Promise.all([
+    Attendance.find(filter).sort({ dateKey: -1 }).lean<AttendanceDoc[]>(),
+    getSettings(),
+  ]);
+  // A holiday is a holiday regardless of what was recorded, so a stray old mark cannot
   // count toward the percentage here either.
-  const records = stored.filter((record) => !isSunday(record.dateKey));
+  const records = stored.filter((record) => !isNonWorkingDay(record.dateKey, settings.holidays));
 
   const totals = emptyTotals();
   for (const record of records) addToTotals(totals, record.status);
@@ -285,15 +357,18 @@ export async function getDefaulters(
     .select('fullName classCode')
     .lean<Pick<StudentDoc, '_id' | 'fullName' | 'classCode'>[]>();
 
-  const records = await Attendance.find({
-    studentId: { $in: students.map((s) => s._id) },
-    dateKey: { $gte: from, $lte: to },
-  }).lean<AttendanceDoc[]>();
+  const [records, settings] = await Promise.all([
+    Attendance.find({
+      studentId: { $in: students.map((s) => s._id) },
+      dateKey: { $gte: from, $lte: to },
+    }).lean<AttendanceDoc[]>(),
+    getSettings(),
+  ]);
 
   const totalsByStudent = new Map<string, AttendanceTotals>();
   for (const record of records) {
-    // Sundays are holidays, so they never count for or against anyone here.
-    if (isSunday(record.dateKey)) continue;
+    // Holidays never count for or against anyone here.
+    if (isNonWorkingDay(record.dateKey, settings.holidays)) continue;
     let totals = totalsByStudent.get(record.studentId);
     if (!totals) {
       totals = emptyTotals();
@@ -329,8 +404,9 @@ export async function getDefaulters(
  * class quietly going unmarked.
  */
 export async function getUnmarkedClasses(dateKey: string = toDateKey()): Promise<ClassCode[]> {
-  // Nothing is unmarked on a Sunday — there is nothing to mark.
-  if (isSunday(dateKey)) return [];
+  // Nothing is unmarked on a holiday — there is nothing to mark.
+  const settings = await getSettings();
+  if (isNonWorkingDay(dateKey, settings.holidays)) return [];
 
   const [classesWithStudents, marked] = await Promise.all([
     Student.distinct('classCode', { status: 'ACTIVE' }) as Promise<ClassCode[]>,

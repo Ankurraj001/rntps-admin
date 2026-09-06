@@ -12,6 +12,7 @@ import { getSettings } from '../../lib/ids.js';
 import { Attendance, type AttendanceDoc } from '../../models/Attendance.js';
 import { Invoice, type InvoiceDoc } from '../../models/Invoice.js';
 import { Student } from '../../models/Student.js';
+import { getUnmarkedClasses, holidayFor } from '../attendance/attendance.service.js';
 
 export interface DuesRow {
   studentId: string;
@@ -215,7 +216,15 @@ export interface DashboardSummary {
   school: { name: string; academicYear: string };
   activeStudents: number;
   studentsByClass: { classCode: string; count: number }[];
-  today: { dateKey: string; marked: number; present: number; percentage: number; unmarkedClasses: string[] };
+  today: {
+    dateKey: string;
+    marked: number;
+    present: number;
+    percentage: number;
+    unmarkedClasses: string[];
+    /** Set when the school is closed today, which is why nothing is unmarked. */
+    holiday: { dateKey: string; label: string } | null;
+  };
   month: { period: string; collectedRupees: number; invoicedRupees: number };
   outstanding: {
     balanceRupees: number;
@@ -246,7 +255,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
   const period = today.slice(0, 7);
   const { from, to } = monthBounds(period);
 
-  const [settings, byClassRaw, todayRecords, classesWithStudents, dues, collection, invoicedThisMonth, noWhatsapp] =
+  const [settings, byClassRaw, storedToday, unmarkedClasses, dues, collection, invoicedThisMonth, noWhatsapp] =
     await Promise.all([
       getSettings(),
       Student.aggregate<{ _id: string; count: number }>([
@@ -254,7 +263,10 @@ export async function getDashboard(): Promise<DashboardSummary> {
         { $group: { _id: '$classCode', count: { $sum: 1 } } },
       ]),
       Attendance.find({ dateKey: today }).lean<AttendanceDoc[]>(),
-      Student.distinct('classCode', { status: 'ACTIVE' }) as Promise<string[]>,
+      // Asked of the attendance module rather than re-derived here. Inlining the same
+      // filter is what let this banner nag every Sunday while GET /attendance/unmarked,
+      // which knew about the school calendar, quietly returned nothing.
+      getUnmarkedClasses(today),
       getDuesReport({}),
       getCollectionReport(from, to),
       invoicedInPeriod(period),
@@ -267,7 +279,11 @@ export async function getDashboard(): Promise<DashboardSummary> {
       }),
     ]);
 
-  const markedClasses = new Set<string>(todayRecords.map((r) => r.classCode));
+  // A holiday ignores whatever is stored, exactly as the register and the monthly sheet
+  // do — otherwise a mark left behind by a day later declared a holiday would still show
+  // up as "60% present today".
+  const todayHoliday = holidayFor(today, settings.holidays);
+  const todayRecords = todayHoliday ? [] : storedToday;
   const workingToday = todayRecords.filter((r) => countsAsWorkingDay(r.status)).length;
   const presentToday = todayRecords.filter((r) => countsAsPresent(r.status)).length;
 
@@ -280,7 +296,8 @@ export async function getDashboard(): Promise<DashboardSummary> {
       marked: todayRecords.length,
       present: presentToday,
       percentage: attendancePercentage(presentToday, workingToday),
-      unmarkedClasses: classesWithStudents.filter((code) => !markedClasses.has(code)).sort(),
+      unmarkedClasses: [...unmarkedClasses].sort(),
+      holiday: todayHoliday,
     },
     month: {
       period,

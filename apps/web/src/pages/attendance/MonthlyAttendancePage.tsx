@@ -102,7 +102,7 @@ export function MonthlyAttendancePage() {
               <Input type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} />
             </label>
             <p className="ml-auto text-xs text-slate-500">
-              P present · A absent · H holiday (Sundays included)
+              P present · A absent · H holiday (Sundays and school holidays)
             </p>
           </div>
         </Card>

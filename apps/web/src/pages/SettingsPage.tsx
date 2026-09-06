@@ -1,12 +1,16 @@
-import type { SettingsDto } from '@rntps/shared';
+import { isSunday, toDateKey, type Holiday, type SettingsDto } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { attendanceApi, attendanceKeys } from '@/api/attendance';
+import { reportKeys } from '@/api/reports';
 import { settingsApi, settingsKeys } from '@/api/settings';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input } from '@/components/ui/Field';
+import { formatDate } from '@/lib/utils';
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -95,6 +99,8 @@ export function SettingsPage() {
           </CardBody>
         </Card>
 
+        <HolidaysCard holidays={data.holidays} />
+
         <Card>
           <CardHeader title="Counters" description="Read-only. These only move forward, so IDs are never reused." />
           <CardBody className="grid grid-cols-3 gap-4 text-sm">
@@ -122,5 +128,125 @@ export function SettingsPage() {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The school holiday calendar.
+ *
+ * Edited through the attendance endpoints rather than PATCH /settings, which takes the
+ * whole array: two admins with the page open would each save the list they loaded and one
+ * would silently lose their entry. Adding and removing one day at a time is also what lets
+ * the dashboard's "Mark holiday" button share exactly this code path.
+ *
+ * Sundays are absent on purpose — they are derived from the calendar, not stored, so there
+ * is nothing here to add or remove.
+ */
+function HolidaysCard({ holidays }: { holidays: Holiday[] }) {
+  const queryClient = useQueryClient();
+  const [dateKey, setDateKey] = useState('');
+  const [label, setLabel] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  async function refresh() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: settingsKeys.all }),
+      queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+      queryClient.invalidateQueries({ queryKey: reportKeys.dashboard }),
+    ]);
+  }
+
+  const add = useMutation({
+    mutationFn: () => attendanceApi.declareHoliday({ dateKey, label: label.trim() }),
+    onSuccess: async () => {
+      setDateKey('');
+      setLabel('');
+      setError(null);
+      await refresh();
+    },
+    onError: (e: unknown) => setError((e as Error).message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (day: string) => attendanceApi.clearHoliday(day),
+    onSuccess: refresh,
+    onError: (e: unknown) => setError((e as Error).message),
+  });
+
+  const sorted = [...holidays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const today = toDateKey();
+  // Mirrors the API's own two rules, so the common mistakes are caught without a round trip.
+  const invalid = dateKey !== '' && isSunday(dateKey);
+  const canAdd = dateKey !== '' && label.trim().length >= 2 && !invalid && !add.isPending;
+
+  return (
+    <Card>
+      <CardHeader
+        title="School holidays"
+        description="Closes every class and the teacher register. Not markable, and not counted toward anyone's attendance."
+      />
+      <CardBody className="space-y-4">
+        {error && <ErrorBlock message={error} />}
+
+        {sorted.length === 0 ? (
+          <p className="text-sm text-slate-500">No holidays declared yet. Sundays are automatic.</p>
+        ) : (
+          <ul className="divide-y divide-slate-200 text-sm">
+            {sorted.map((holiday) => (
+              <li key={holiday.dateKey} className="flex items-center gap-3 py-2">
+                <span className="w-28 shrink-0 tabular-nums text-slate-600">
+                  {formatDate(holiday.dateKey)}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-slate-900">{holiday.label}</span>
+                {/* Past holidays stay removable: the usual reason to remove one is that it
+                    was declared by mistake, which is only noticed afterwards. */}
+                {holiday.dateKey <= today && (
+                  <span className="text-xs text-slate-400">past</span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove ${holiday.label}`}
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate(holiday.dateKey)}
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex flex-wrap items-end gap-3 border-t border-slate-200 pt-4">
+          <Field
+            label="Date"
+            htmlFor="holiday-date"
+            error={invalid ? 'Sundays are already a holiday' : undefined}
+          >
+            <Input
+              id="holiday-date"
+              type="date"
+              className="w-44"
+              value={dateKey}
+              aria-invalid={invalid ? true : undefined}
+              onChange={(e) => setDateKey(e.target.value)}
+            />
+          </Field>
+          <Field label="Reason" htmlFor="holiday-reason" className="min-w-48 flex-1">
+            <Input
+              id="holiday-reason"
+              placeholder="Diwali"
+              maxLength={80}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+            />
+          </Field>
+          <Button disabled={!canAdd} onClick={() => add.mutate()}>
+            {add.isPending && <Spinner />}
+            Add
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

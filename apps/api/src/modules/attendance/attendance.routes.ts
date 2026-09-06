@@ -1,5 +1,7 @@
 import {
   attendanceSummaryQuerySchema,
+  clearHolidayQuerySchema,
+  declareHolidaySchema,
   monthlyQuerySchema,
   rosterQuerySchema,
   saveRosterSchema,
@@ -124,6 +126,53 @@ attendanceRoutes.get(
   asyncHandler(async (req, res) => {
     const { month, threshold, classCode } = validatedQuery(req, attendanceSummaryQuerySchema);
     res.json(await service.getDefaulters(month, threshold, classCode));
+  }),
+);
+
+/**
+ * Declaring a school holiday.
+ *
+ * Admin-only and school-wide: this closes every class and the teacher register in one
+ * write, which is not a call a teacher makes for the whole school. It writes to settings
+ * rather than generating attendance records — nothing is stored per student, so the day
+ * reads as a holiday for children enrolled afterwards too, and undoing it is one $pull
+ * rather than deleting a document per child.
+ */
+attendanceRoutes.post(
+  '/holiday',
+  requireRole('ADMIN'),
+  validate(declareHolidaySchema),
+  asyncHandler(async (req, res) => {
+    const payload = validatedBody(req, declareHolidaySchema);
+    const holidays = await service.declareHoliday(payload.dateKey, payload.label);
+
+    await recordAudit(req, {
+      action: 'attendance.holiday.declare',
+      entity: 'settings',
+      entityId: payload.dateKey,
+      after: { dateKey: payload.dateKey, label: payload.label },
+    });
+
+    res.json({ holidays });
+  }),
+);
+
+attendanceRoutes.delete(
+  '/holiday',
+  requireRole('ADMIN'),
+  validate(clearHolidayQuerySchema, 'query'),
+  asyncHandler(async (req, res) => {
+    const { dateKey } = validatedQuery(req, clearHolidayQuerySchema);
+    const holidays = await service.clearHoliday(dateKey);
+
+    await recordAudit(req, {
+      action: 'attendance.holiday.clear',
+      entity: 'settings',
+      entityId: dateKey,
+      after: { dateKey },
+    });
+
+    res.json({ holidays });
   }),
 );
 

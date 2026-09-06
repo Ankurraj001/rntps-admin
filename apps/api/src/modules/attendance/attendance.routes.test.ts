@@ -1,10 +1,18 @@
 import type { Express } from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../app.js';
 import { Attendance } from '../../models/Attendance.js';
 import { SETTINGS_ID, Settings } from '../../models/Settings.js';
-import { adminAuth, createTestUser, seedSettings, studentInput, teacherAuth, tokenFor } from '../../test/factories.js';
+import {
+  adminAuth,
+  createTestUser,
+  freezeToWorkingDay,
+  seedSettings,
+  studentInput,
+  teacherAuth,
+  tokenFor,
+} from '../../test/factories.js';
 import { createStudent } from '../students/student.service.js';
 
 let app: Express;
@@ -28,6 +36,10 @@ beforeEach(async () => {
   app = createApp();
   adminHeader = (await adminAuth()).header;
 });
+
+// Unconditional, so a test that freezes the clock and then fails cannot leave it frozen
+// for the rest of the file.
+afterEach(() => vi.useRealTimers());
 
 describe('PUT /attendance/roster', () => {
   it('saves a roster and reads it back', async () => {
@@ -206,6 +218,9 @@ describe('teacher class access', () => {
     await seedClass('6', ['Kabir Singh']);
     const { header } = await teacherAuth(['5']);
 
+    // The route asks about today and says nothing on a holiday, so the day is pinned —
+    // after the seeding above, which must run on the real clock.
+    freezeToWorkingDay();
     const res = await request(app).get('/api/v1/attendance/unmarked').set('Authorization', header).expect(200);
     expect(res.body.classes).toEqual(['5']);
   });

@@ -1,29 +1,52 @@
-import { CLASS_CODES, classLabel, formatINR } from '@rntps/shared';
-import { useQuery } from '@tanstack/react-query';
+import { CLASS_CODES, classLabel, formatINR, isSunday } from '@rntps/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   CalendarCheck,
+  CalendarDays,
   IndianRupee,
   MessageSquare,
   Plus,
   TrendingUp,
   Users,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { attendanceApi, attendanceKeys } from '@/api/attendance';
 import { reportKeys, reportsApi } from '@/api/reports';
+import { settingsKeys } from '@/api/settings';
 import { useCurrentUser } from '@/auth/AuthProvider';
+import { MarkHolidayModal } from '@/components/attendance/MarkHolidayModal';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
-import { ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
+import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { formatDate } from '@/lib/utils';
 
 export function DashboardPage() {
   const me = useCurrentUser();
   const isAdmin = me.role === 'ADMIN';
+  const queryClient = useQueryClient();
+  const [declaring, setDeclaring] = useState(false);
 
   const dashboard = useQuery({ queryKey: reportKeys.dashboard, queryFn: reportsApi.dashboard });
+  const today = dashboard.data?.today;
+
+  const clearHoliday = useMutation({
+    mutationFn: (dateKey: string) => attendanceApi.clearHoliday(dateKey),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+        queryClient.invalidateQueries({ queryKey: reportKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: settingsKeys.all }),
+      ]);
+    },
+  });
+
+  // A Sunday is derived from the calendar rather than declared, so there is no stored
+  // entry to remove and no Undo to offer. Tested on the date rather than the label, which
+  // is only the wording shown to the reader.
+  const isDeclared = Boolean(today?.holiday) && !isSunday(today?.dateKey ?? '');
 
   return (
     <>
@@ -62,7 +85,37 @@ export function DashboardPage() {
           <>
             {/* Nudges first: these are the things that need doing today. */}
             <div className="space-y-3">
-              {dashboard.data.today.unmarkedClasses.length > 0 && (
+              {/*
+                The school being closed is stated instead of the nudge, not alongside it:
+                "attendance not marked" on a day nobody could mark is the bug this replaces.
+              */}
+              {dashboard.data.today.holiday && (
+                <ActionBanner
+                  tone="slate"
+                  icon={<CalendarDays className="h-4 w-4" aria-hidden />}
+                  message={
+                    <>
+                      Today is <strong>{dashboard.data.today.holiday.label}</strong> — a school
+                      holiday. No attendance to mark.
+                    </>
+                  }
+                  action={
+                    isAdmin && isDeclared ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={clearHoliday.isPending}
+                        onClick={() => clearHoliday.mutate(dashboard.data.today.dateKey)}
+                      >
+                        {clearHoliday.isPending && <Spinner />}
+                        Undo
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )}
+
+              {!dashboard.data.today.holiday && dashboard.data.today.unmarkedClasses.length > 0 && (
                 <ActionBanner
                   tone="amber"
                   icon={<CalendarCheck className="h-4 w-4" aria-hidden />}
@@ -78,7 +131,20 @@ export function DashboardPage() {
                       .
                     </>
                   }
-                  action={<Link to="/attendance"><Button size="sm">Mark now</Button></Link>}
+                  action={
+                    <div className="flex items-center gap-2">
+                      <Link to="/attendance"><Button size="sm">Mark now</Button></Link>
+                      {/*
+                        Admin-only: this closes every class at once, which is not a call a
+                        teacher makes on behalf of the school. The API enforces the same.
+                      */}
+                      {isAdmin && (
+                        <Button size="sm" variant="secondary" onClick={() => setDeclaring(true)}>
+                          Mark holiday
+                        </Button>
+                      )}
+                    </div>
+                  }
                 />
               )}
 
@@ -122,12 +188,20 @@ export function DashboardPage() {
                 icon={<CalendarCheck className="h-5 w-5 text-emerald-600" aria-hidden />}
                 label={`Present today (${formatDate(dashboard.data.today.dateKey)})`}
                 value={
-                  dashboard.data.today.marked === 0 ? 'Not marked' : `${dashboard.data.today.percentage}%`
+                  // "Not marked" on a closed school reads as an outstanding task rather
+                  // than as the school being shut, so a holiday says so plainly.
+                  dashboard.data.today.holiday
+                    ? 'Holiday'
+                    : dashboard.data.today.marked === 0
+                      ? 'Not marked'
+                      : `${dashboard.data.today.percentage}%`
                 }
                 hint={
-                  dashboard.data.today.marked > 0
-                    ? `${dashboard.data.today.present} of ${dashboard.data.today.marked} marked`
-                    : undefined
+                  dashboard.data.today.holiday
+                    ? dashboard.data.today.holiday.label
+                    : dashboard.data.today.marked > 0
+                      ? `${dashboard.data.today.present} of ${dashboard.data.today.marked} marked`
+                      : undefined
                 }
               />
               {isAdmin && (
@@ -216,6 +290,14 @@ export function DashboardPage() {
           </>
         )}
       </div>
+
+      {declaring && today && (
+        <MarkHolidayModal
+          dateKey={today.dateKey}
+          alreadyMarked={today.marked}
+          onClose={() => setDeclaring(false)}
+        />
+      )}
     </>
   );
 }
@@ -253,12 +335,17 @@ function ActionBanner({
   message,
   action,
 }: {
-  tone: 'amber' | 'red';
+  tone: 'amber' | 'red' | 'slate';
   icon: ReactNode;
   message: ReactNode;
   action?: ReactNode;
 }) {
-  const styles = tone === 'red' ? 'bg-red-50 text-red-900' : 'bg-amber-50 text-amber-900';
+  const styles = {
+    red: 'bg-red-50 text-red-900',
+    amber: 'bg-amber-50 text-amber-900',
+    // Neutral on purpose: a closed school is information, not a task.
+    slate: 'bg-slate-100 text-slate-700',
+  }[tone];
   return (
     <div className={`flex flex-wrap items-center gap-3 rounded-md px-4 py-3 text-sm ${styles}`}>
       {icon}

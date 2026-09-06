@@ -2,7 +2,7 @@ import { PAYMENT_MODE_LABELS, classLabel, formatINR } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { feeKeys, feesApi } from '@/api/fees';
 import { settingsApi, settingsKeys } from '@/api/settings';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,21 @@ import { formatDate } from '@/lib/utils';
  */
 export function ReceiptPage() {
   const { invoiceId = '', receiptNo = '' } = useParams<{ invoiceId: string; receiptNo: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  /*
+    Reached from two places — the invoice page and a student's Fees tab — so a fixed
+    destination is wrong from one of them. Going back a step returns to whichever it was.
+
+    'default' is the key React Router gives the entry the app was loaded on, so there is no
+    in-app step to return to: a fresh tab, a reloaded deep link, or the printed receipt's
+    URL typed in directly. Stepping back there would leave the app entirely, so those fall
+    through to the invoice. Same reasoning as the fee slip.
+  */
+  const canGoBack = location.key !== 'default';
+  const goBack = () =>
+    canGoBack ? navigate(-1) : navigate(`/fees/invoices/${encodeURIComponent(invoiceId)}`);
 
   const invoice = useQuery({ queryKey: feeKeys.invoice(invoiceId), queryFn: () => feesApi.invoice(invoiceId) });
   const settings = useQuery({ queryKey: settingsKeys.all, queryFn: settingsApi.get });
@@ -49,12 +64,10 @@ export function ReceiptPage() {
   return (
     <div className="mx-auto max-w-2xl p-4 sm:p-6">
       <div className="mb-4 flex justify-between print:hidden">
-        <Link to={`/fees/invoices/${encodeURIComponent(invoiceId)}`}>
-          <Button variant="ghost">
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Back to invoice
-          </Button>
-        </Link>
+        <Button variant="ghost" onClick={goBack}>
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Back
+        </Button>
         <Button onClick={() => window.print()}>
           <Printer className="h-4 w-4" aria-hidden />
           Print

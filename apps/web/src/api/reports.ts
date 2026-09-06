@@ -56,7 +56,15 @@ export interface DashboardSummary {
   school: { name: string; academicYear: string };
   activeStudents: number;
   studentsByClass: { classCode: string; count: number }[];
-  today: { dateKey: string; marked: number; present: number; percentage: number; unmarkedClasses: string[] };
+  today: {
+    dateKey: string;
+    marked: number;
+    present: number;
+    percentage: number;
+    unmarkedClasses: string[];
+    /** Set when the school is closed today — a Sunday or a declared school holiday. */
+    holiday: { dateKey: string; label: string } | null;
+  };
   month: { period: string; collectedRupees: number; invoicedRupees: number };
   outstanding: {
     balanceRupees: number;

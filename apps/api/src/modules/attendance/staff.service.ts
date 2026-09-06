@@ -64,10 +64,10 @@ export async function getStaffRoster(dateKey: string): Promise<StaffRosterRespon
       return {
         userId: String(teacher._id),
         name: teacher.name,
-        // A Sunday reads HOLIDAY whatever is stored, so a mark saved before the rule
-        // existed cannot drag a percentage down.
-        status: sunday ? ('HOLIDAY' as const) : (mark?.status ?? null),
-        remarks: sunday ? '' : (mark?.remarks ?? ''),
+        // A holiday reads HOLIDAY whatever is stored, so a mark saved before the day was
+        // declared cannot drag a percentage down.
+        status: holiday ? ('HOLIDAY' as const) : (mark?.status ?? null),
+        remarks: holiday ? '' : (mark?.remarks ?? ''),
       };
     }),
   };
@@ -80,9 +80,12 @@ export async function saveStaffRoster(
   if (payload.dateKey > toDateKey()) {
     throw AppError.badRequest('Attendance cannot be marked for a future date');
   }
-  // Refuse rather than accept marks that every reader would then ignore.
-  if (isSunday(payload.dateKey)) {
-    throw AppError.badRequest('Sunday is a holiday — attendance is not marked');
+  // Refuse rather than accept marks that every reader would then ignore. The teacher
+  // register follows the same school calendar as the classes, declared holidays included.
+  const settings = await getSettings();
+  const holiday = holidayFor(payload.dateKey, settings.holidays);
+  if (holiday) {
+    throw AppError.badRequest(`${holiday.label} is a holiday — attendance is not marked`);
   }
 
   const roster = await activeTeachers();
@@ -140,14 +143,14 @@ export async function getStaffMonthly(month: string): Promise<StaffMonthlyRespon
     const days: Record<string, string> = {};
 
     for (const dateKey of allDateKeys) {
-      if (isSunday(dateKey)) {
+      if (holidays[dateKey]) {
         days[dateKey] = 'HOLIDAY';
         addToTotals(totals, 'HOLIDAY');
       }
     }
     for (const record of byTeacher.get(String(teacher._id)) ?? []) {
-      // A stray Sunday mark is discarded rather than counted, exactly as for a student.
-      if (isSunday(record.dateKey)) continue;
+      // A stray holiday mark is discarded rather than counted, exactly as for a student.
+      if (holidays[record.dateKey]) continue;
       days[record.dateKey] = record.status;
       addToTotals(totals, record.status);
     }

@@ -2,6 +2,7 @@ import type {
   AttendanceDefaulter,
   AttendanceStatus,
   AttendanceTotals,
+  Holiday,
   MonthlyResponse,
   RosterResponse,
   StaffMonthlyResponse,
@@ -37,6 +38,11 @@ export const attendanceApi = {
   staffMonthly: (month: string) =>
     api.get<StaffMonthlyResponse>(`/attendance/staff/monthly${qs({ month })}`),
   unmarked: () => api.get<{ classes: string[] }>('/attendance/unmarked'),
+  // School-wide in one call: no classCode, because a holiday closes every register at
+  // once rather than each teacher marking their own.
+  declareHoliday: (payload: Holiday) => api.post<{ holidays: Holiday[] }>('/attendance/holiday', payload),
+  clearHoliday: (dateKey: string) =>
+    api.del<{ holidays: Holiday[] }>(`/attendance/holiday${qs({ dateKey })}`),
   forStudent: (studentId: string) => api.get<StudentAttendance>(`/attendance/student/${studentId}`),
 };
 

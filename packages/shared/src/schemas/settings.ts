@@ -2,10 +2,19 @@ import { z } from 'zod';
 import { ACADEMIC_YEAR_PATTERN, DATE_KEY_PATTERN } from '../date.js';
 import { MAX_MESSAGE_LENGTH } from './notifications.js';
 
+/**
+ * A day the whole school is closed.
+ *
+ * School-wide by construction: there is no classCode here, so declaring one closes every
+ * class and the teacher register at once rather than each roster being told separately.
+ */
 export const holidaySchema = z.object({
   dateKey: z.string().regex(DATE_KEY_PATTERN),
   label: z.string().trim().min(2).max(80),
 });
+
+/** Stated once so the array cap and the single-holiday endpoint cannot disagree. */
+export const MAX_HOLIDAYS = 120;
 
 export const messageTemplateSchema = z.object({
   key: z.string().trim().min(2).max(40),
@@ -26,11 +35,12 @@ export const updateSettingsSchema = z.object({
     .regex(/^[A-Z]{2,8}$/, 'Use 2-8 letters')
     .optional(),
   feeDueDayOfMonth: z.number().int().min(1).max(28).optional(),
-  holidays: z.array(holidaySchema).max(120).optional(),
+  holidays: z.array(holidaySchema).max(MAX_HOLIDAYS).optional(),
   templates: z.array(messageTemplateSchema).max(20).optional(),
 });
 
 export type UpdateSettingsPayload = z.output<typeof updateSettingsSchema>;
+export type Holiday = z.output<typeof holidaySchema>;
 
 export interface SettingsDto {
   schoolName: string;

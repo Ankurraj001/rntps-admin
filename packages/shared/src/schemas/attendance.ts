@@ -76,12 +76,27 @@ export const studentAttendanceQuerySchema = z.object({
   to: z.string().regex(DATE_KEY_PATTERN).optional(),
 });
 
+/**
+ * Declaring a school holiday.
+ *
+ * One day, one label, no classCode — a holiday closes the whole school, so there is
+ * deliberately no way to express "a holiday for class 5 only". A single class that did
+ * not run is marked HOLIDAY on its own roster instead.
+ */
+export const declareHolidaySchema = z.object({
+  dateKey: dateKeyField,
+  label: z.string().trim().min(2).max(80),
+});
+
+export const clearHolidayQuerySchema = z.object({ dateKey: dateKeyField });
+
 export type SaveRosterPayload = z.output<typeof saveRosterSchema>;
 export type SaveStaffRosterPayload = z.output<typeof saveStaffRosterSchema>;
 export type StaffMonthlyQuery = z.output<typeof staffMonthlyQuerySchema>;
 export type RosterQuery = z.output<typeof rosterQuerySchema>;
 export type MonthlyQuery = z.output<typeof monthlyQuerySchema>;
 export type AttendanceSummaryQuery = z.output<typeof attendanceSummaryQuerySchema>;
+export type DeclareHolidayPayload = z.output<typeof declareHolidaySchema>;
 
 export interface RosterEntry {
   studentId: string;
@@ -97,9 +112,12 @@ export interface RosterResponse {
   /**
    * Set for a school holiday or any Sunday. Sundays are not stored anywhere — they are
    * derived, so the rule applies to past dates too and no backfill is ever needed.
+   *
+   * Non-null is the single test for "this day cannot be marked": read this rather than
+   * `isSunday`, which distinguishes only *which* holiday it is for the wording.
    */
   holiday: { dateKey: string; label: string } | null;
-  /** A Sunday cannot be marked at all; the roster is read-only. */
+  /** True for a Sunday specifically. A declared holiday is equally read-only. */
   isSunday: boolean;
   isFuture: boolean;
   submittedAt: string | null;

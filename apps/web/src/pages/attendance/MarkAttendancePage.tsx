@@ -197,9 +197,14 @@ export function MarkAttendancePage() {
     }
   }
 
-  // Sundays cannot be marked at all — the API refuses them, so the UI must not offer.
-  const isSundayRoster = active.data?.isSunday ?? false;
-  const isReadOnly = (active.data?.isFuture ?? false) || isSundayRoster;
+  /*
+    A school holiday cannot be marked at all — the API refuses it, so the UI must not
+    offer. `holiday` covers both a Sunday and a declared closure, which is why it is read
+    here in preference to `isSunday`: the two behave identically and splitting them is how
+    one of the buttons below ends up still enabled on a declared holiday.
+  */
+  const schoolHoliday = active.data?.holiday ?? null;
+  const isReadOnly = (active.data?.isFuture ?? false) || schoolHoliday !== null;
 
   return (
     <>
@@ -289,27 +294,18 @@ export function MarkAttendancePage() {
           </CardBody>
         </Card>
 
-        {isSundayRoster && (
+        {/* One banner for both: a Sunday and a declared closure read the same to a teacher. */}
+        {schoolHoliday && (
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-3 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
             <span>
-              <strong>Sunday</strong> — a holiday for the whole school. Nothing to mark, and it
-              does not count toward anyone's attendance.
+              <strong>{schoolHoliday.label}</strong> — a holiday for the whole school. Nothing to
+              mark, and it does not count toward anyone's attendance.
             </span>
           </div>
         )}
 
-        {!isSundayRoster && active.data?.holiday && (
-          <div className="flex items-center gap-2 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
-            <span>
-              <strong>{active.data.holiday.label}</strong> is a school holiday. You can still mark
-              attendance if the school was open.
-            </span>
-          </div>
-        )}
-
-        {isHoliday && !isSundayRoster && (
+        {isHoliday && !schoolHoliday && (
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-3 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
             <span>

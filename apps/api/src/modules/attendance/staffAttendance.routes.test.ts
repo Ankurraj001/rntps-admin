@@ -1,13 +1,14 @@
 import type { Express } from 'express';
 import request from 'supertest';
-import { toDateKey } from '@rntps/shared';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../app.js';
 import { StaffAttendance } from '../../models/StaffAttendance.js';
 import { Attendance } from '../../models/Attendance.js';
 import {
+  A_WORKING_MONDAY,
   adminAuth,
   createTestUser,
+  freezeToWorkingDay,
   seedSettings,
   studentInput,
   teacherAuth,
@@ -46,6 +47,9 @@ beforeEach(async () => {
   adminHeader = admin.header;
   adminId = String(admin.user._id);
 });
+
+// Unconditional, so a test that freezes the clock and then fails cannot leave it frozen.
+afterEach(() => vi.useRealTimers());
 
 describe('PUT /attendance/staff/roster', () => {
   it('saves a teacher roster and reads it back', async () => {
@@ -291,9 +295,8 @@ describe('separation from student attendance', () => {
     const anita = await seedTeacher('Anita Rao');
     const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
 
-    // The dashboard's "today" is toDateKey(), so both rows are written directly rather than
-    // through the routes — which would refuse the real date if it happened to be a Sunday.
-    const today = toDateKey();
+    // Written directly rather than through the routes, which refuse a future date.
+    const today = A_WORKING_MONDAY;
     const markedAt = new Date();
     await Attendance.create({
       _id: `${student.studentId}:${today}`,
@@ -315,7 +318,9 @@ describe('separation from student attendance', () => {
 
     // getDashboard counts every row of `attendances` for today with no class filter, which
     // is the whole reason teacher attendance lives elsewhere: one absent teacher must not
-    // drag the school's "present today" to 50%.
+    // drag the school's "present today" to 50%. The clock is pinned only now, after the
+    // two writes above — a document created under a mocked Date comes back malformed.
+    freezeToWorkingDay();
     const res = await asAdmin.get('/api/v1/reports/dashboard').expect(200);
     expect(res.body.today).toMatchObject({ marked: 1, present: 1, percentage: 100 });
   });
