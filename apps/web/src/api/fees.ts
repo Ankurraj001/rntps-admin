@@ -50,6 +50,10 @@ export const feesApi = {
     api.post<InvoiceDto>(`/fees/invoices/${encodeURIComponent(id)}/payments/${receiptNo}/reverse`, { reason }),
   voidInvoice: (id: string, reason: string) =>
     api.post<InvoiceDto>(`/fees/invoices/${encodeURIComponent(id)}/void`, { reason }),
+  /** Hard delete, and only for an invoice with no payments — see the Delete card on the
+   *  invoice page. Voiding leaves the month billed, so this is the only way to correct a run. */
+  deleteInvoice: (id: string) =>
+    api.del<{ deleted: boolean }>(`/fees/invoices/${encodeURIComponent(id)}`),
   studentInvoices: (studentId: string) =>
     api.get<{ items: InvoiceDto[] }>(`/fees/students/${studentId}/invoices`),
   /** Pays off as much of a student's total outstanding as one amount covers, oldest

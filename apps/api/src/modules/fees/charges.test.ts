@@ -223,6 +223,38 @@ describe('the invoice run absorbs pending charges', () => {
     expect(preview.body.rows[0]).toMatchObject({ chargeCount: 1, totalRupees: 1_300 });
   });
 
+  // The same property, but reached by deleting rather than voiding — and the difference that
+  // makes deleting worth having: the charge comes back for *August*, not September, so a run
+  // that went out with a head missing can be corrected in place rather than a month late.
+  it('frees a charge for the same month if its invoice is deleted', async () => {
+    await setTuition();
+    const studentId = await newStudent();
+    await addCharge(studentId, 'Picnic', 300).expect(201);
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-08' }).expect(200);
+
+    await as.del(`/api/v1/fees/invoices/${studentId}:2026-08`).expect(200);
+
+    const charges = await as.get(`/api/v1/students/${studentId}/charges`).expect(200);
+    expect(charges.body.items[0].billedOnInvoiceId).toBeNull();
+
+    const preview = await as.post('/api/v1/fees/runs/preview').send({ period: '2026-08' }).expect(200);
+    expect(preview.body.rows[0]).toMatchObject({
+      alreadyInvoiced: false,
+      chargeCount: 1,
+      totalRupees: 1_300,
+    });
+
+    await as.post('/api/v1/fees/runs/commit').send({ period: '2026-08' }).expect(200);
+
+    const invoices = await invoicesOf(studentId).expect(200);
+    expect(invoices.body.items).toHaveLength(1);
+    expect(invoices.body.items[0]).toMatchObject({ period: '2026-08', totalRupees: 1_300 });
+
+    // And it is billed exactly once — the charge does not come round again in September.
+    const september = await as.post('/api/v1/fees/runs/preview').send({ period: '2026-09' }).expect(200);
+    expect(september.body.rows[0]).toMatchObject({ chargeCount: 0, totalRupees: 1_000 });
+  });
+
   it('applies the concession to fees only, not to charges', async () => {
     await setTuition();
     const studentId = await newStudent({

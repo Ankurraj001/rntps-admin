@@ -356,7 +356,8 @@ their assigned classes only. A student's whole history is on the Academics tab o
 
 **Fees** — monthly fee heads per class (including transport-only heads), **per-student transport
 fares**, percentage or flat concessions, invoice runs that preview before committing and cannot double-bill, payment recording
-with sequential receipt numbers, reversal that keeps the record, voiding, and printable receipts.
+with sequential receipt numbers, reversal that keeps the record, voiding, deleting a bill nobody has
+paid against so its month can be run again, and printable receipts.
 
 **Fee reminders** — WhatsApp click-to-chat batches grouped by guardian phone number, so a parent with
 three children gets one message rather than three. Each child's bill is **itemised** — a line per fee
@@ -456,6 +457,7 @@ A     GET    /fees/invoices/:invoiceId/slip       bill to hand a parent: this mo
 A     POST   /fees/invoices/:invoiceId/payments
 A     POST   /fees/invoices/:invoiceId/payments/:receiptNo/reverse
 A     POST   /fees/invoices/:invoiceId/void
+A     DELETE /fees/invoices/:invoiceId              hard delete, and only if nothing was ever paid
 A     GET    /fees/students/:studentId/invoices
 
 A     GET|POST /notifications                      build a reminder batch
@@ -747,10 +749,11 @@ consumes it:
 | `auditLogs` | ~6,500 docs/yr, then flat: the 730-day TTL is the only thing in this database that expires. | flat |
 | `users` | Ten people. Rotated refresh tokens are held for 24 hours, so ~10 KB each; before that window existed it was ~120 KB each, outweighing all 250 student records. | flat |
 
-Nothing else in this system ever shrinks: invoices are voided rather than deleted, payments are
-flagged rather than removed, students are deactivated rather than deleted, and a charge is never
-pulled once billed. That is deliberate — it is a financial record — but it means storage is
-monotonic and worth watching once a year rather than never.
+Almost nothing else in this system shrinks: payments are flagged rather than removed, students are
+deactivated rather than deleted, and a charge is never pulled once billed. That is deliberate — it
+is a financial record — so storage is effectively monotonic and worth watching once a year rather
+than never. The one exception is an invoice **nobody has ever paid against**, which can be deleted
+outright (see below); it is rare, it is audited, and it is not a meaningful share of the growth.
 
 **Two things bite before storage does.** M0 has no backups (see below), and it **pauses after 30
 days of inactivity** — a long holiday with no traffic can suspend the cluster, and the first request
@@ -1018,9 +1021,11 @@ Three consequences fall out of that, all tested:
 - A charge added **after** the month's invoice exists is picked up by the **next** month's run. The
   existing invoice is never rewritten.
 - **Voiding an invoice frees its charges again**, because a voided invoice bills nothing. They return
-  to pending and the next run takes them.
+  to pending and the **next** month's run takes them — the voided month itself stays billed.
+- **Deleting an invoice frees them for the same month**, because there is no longer a document
+  carrying their ids. That is the difference between the two, and the reason deleting exists.
 - A charge that has been billed **cannot be removed** — it is a line on an invoice a parent may
-  already have paid against. Void or adjust the invoice instead.
+  already have paid against. Void, delete or adjust the invoice instead.
 
 ### The student page shows all three states
 
@@ -1229,6 +1234,38 @@ invoice covering everything owed for that month. See the section above.
 
 `calculationChain.test.ts` pins every line of the table above, and asserts the committed invoice
 matches the preview exactly.
+
+### Correcting a run that went out wrong
+
+A run can go out wrong — a head missing from the class structure, transport not ticked on a student,
+no fare set. **Voiding does not fix that**, and it is worth being clear why: the run decides who to
+skip on the period alone, and the invoice key is `{studentId}:{period}`, so a voided invoice keeps
+that student's month occupied for good. The corrected bill has nowhere to go.
+
+So there are two paths, and which one applies is decided by a single question — *has any money been
+recorded against this invoice?*
+
+| | Action | What happens |
+|---|---|---|
+| **Nothing was ever paid** | **Delete** it | The document goes. Its charges return to pending, the month frees up, and re-running that same period re-issues it — for that student alone, since everyone else still counts as already invoiced. |
+| **A payment was recorded** | **Reverse**, then **void** | The invoice is marked `VOID` and owes nothing, but the payments and their receipt numbers stay on the record. The month stays billed. |
+
+Deleting refuses if the invoice carries **any** payment, *including a reversed one* — stricter than
+voiding, which lets a fully-reversed invoice through. A reversed payment still holds a receipt number
+the collection report lists, struck through, so that a bounced cheque leaves no unexplained gap when
+reconciling against the bank. Deleting the invoice would take that receipt with it.
+
+It is a hard delete: nothing is left marked "deleted", and the `auditLogs` entry — which carries the
+whole invoice, not just its id — is the only remaining trace. Admin only, and on the invoice page
+rather than the list, so it follows reading the bill.
+
+```
+Fee structure was missing a head
+   → Invoices → open it → Delete
+   → Fee structures → add the head
+   → Fees → Invoice run → preview 2026-08   (one row: that student)
+   → Commit                                  created: 1, with the right total
+```
 
 
 ## Data protection

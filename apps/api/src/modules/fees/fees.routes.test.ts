@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../app.js';
+import { AuditLog } from '../../models/AuditLog.js';
 import { Invoice } from '../../models/Invoice.js';
 import { SETTINGS_ID, Settings } from '../../models/Settings.js';
 import { adminAuth, seedSettings, studentInput, teacherAuth } from '../../test/factories.js';
@@ -17,6 +18,7 @@ const as = {
   get: (p: string) => request(app).get(p).set('Authorization', adminHeader),
   post: (p: string) => request(app).post(p).set('Authorization', adminHeader),
   put: (p: string) => request(app).put(p).set('Authorization', adminHeader),
+  del: (p: string) => request(app).delete(p).set('Authorization', adminHeader),
 };
 
 /** Tuition ₹1,200 for everyone, transport ₹600 only for opted-in students. */
@@ -533,6 +535,124 @@ describe('voiding an invoice', () => {
 
     const invoice = await as.get(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
     expect(invoice.body.status).toBe('VOID');
+  });
+});
+
+/**
+ * Deleting is the only way to correct a bad run. Voiding is not: the run's "already invoiced"
+ * check ignores status, and the key `{studentId}:{period}` stays occupied either way — so a
+ * student billed with a head missing could never be re-billed for that month.
+ *
+ * The line that keeps it safe is that an invoice with *any* payment is undeletable, reversed
+ * ones included. That is what leaves the collection report untouched.
+ */
+describe('deleting an invoice', () => {
+  let studentId: string;
+  let invoiceId: string;
+
+  beforeEach(async () => {
+    await setStructure('5');
+    const student = await createStudent(studentInput({ fullName: 'Aarav Sharma', classCode: '5' }));
+    studentId = student.studentId;
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    invoiceId = `${studentId}:${PERIOD}`;
+  });
+
+  it('deletes an unpaid invoice', async () => {
+    const res = await as.del(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
+    expect(res.body).toEqual({ deleted: true });
+
+    await as.get(`/api/v1/fees/invoices/${invoiceId}`).expect(404);
+    expect(await Invoice.countDocuments({ _id: invoiceId })).toBe(0);
+  });
+
+  it('deletes a voided invoice, freeing a month voided before deleting existed', async () => {
+    await as.post(`/api/v1/fees/invoices/${invoiceId}/void`).send({ reason: 'Billed in error' }).expect(200);
+
+    await as.del(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
+    await as.get(`/api/v1/fees/invoices/${invoiceId}`).expect(404);
+
+    // Voiding alone leaves the month billed and its fee lines unrecoverable — deleting the
+    // void is what lets the real bill be raised for the month it belongs to.
+    const commit = await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    expect(commit.body.created).toBe(1);
+    const reissued = await as.get(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
+    expect(reissued.body).toMatchObject({ status: 'DUE', totalRupees: 1_200 });
+  });
+
+  it('refuses to delete an invoice with a live payment', async () => {
+    await as
+      .post(`/api/v1/fees/invoices/${invoiceId}/payments`)
+      .send({ amountRupees: 100, mode: 'CASH', paidAt: '2026-08-05' })
+      .expect(201);
+
+    const res = await as.del(`/api/v1/fees/invoices/${invoiceId}`).expect(400);
+    expect(res.body.error.message).toMatch(/reverse them and void it instead/i);
+    expect(await Invoice.countDocuments({ _id: invoiceId })).toBe(1);
+  });
+
+  // Stricter than voiding, which lets this case through. The receipt was handed to a parent and
+  // the collection report still lists it, struck through — deleting would make it vanish.
+  it('refuses to delete an invoice whose only payment is reversed', async () => {
+    await as
+      .post(`/api/v1/fees/invoices/${invoiceId}/payments`)
+      .send({ amountRupees: 100, mode: 'CHEQUE', paidAt: '2026-08-05' })
+      .expect(201);
+    await as
+      .post(`/api/v1/fees/invoices/${invoiceId}/payments/RCPT-26-0001/reverse`)
+      .send({ reason: 'Cheque bounced' })
+      .expect(200);
+
+    // Voiding is allowed here; deleting is not.
+    await as.post(`/api/v1/fees/invoices/${invoiceId}/void`).send({ reason: 'Billed in error' }).expect(200);
+    const res = await as.del(`/api/v1/fees/invoices/${invoiceId}`).expect(400);
+    expect(res.body.error.message).toMatch(/receipt numbers/i);
+  });
+
+  it('404s on an invoice that is not there', async () => {
+    await as.del(`/api/v1/fees/invoices/${studentId}:2026-09`).expect(404);
+  });
+
+  it('records the deleted invoice in the audit log', async () => {
+    await as.del(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
+
+    const entry = await AuditLog.findOne({ action: 'invoice.delete', entityId: invoiceId }).lean();
+    // The document is gone, so this line is the only trace the bill was ever raised.
+    expect(entry?.before).toMatchObject({
+      studentId,
+      // The snapshots go too: after a promotion the invoice was the only record of the class.
+      studentName: 'Aarav Sharma',
+      classCode: '5',
+      period: PERIOD,
+      status: 'DUE',
+      totalRupees: 1_200,
+    });
+  });
+
+  // The point of the whole feature: the same month can be run again, for that student alone.
+  it('lets the same period be run again, and only for that student', async () => {
+    const other = await createStudent(studentInput({ fullName: 'Kabir Singh', classCode: '5' }));
+    await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+
+    await as.del(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
+
+    // Raise the fee before re-running, the way a real correction would.
+    await setStructure('5', [{ code: 'TUITION', name: 'Tuition Fee', amountRupees: 1_500, appliesTo: 'ALL' }]);
+
+    const preview = await as.post('/api/v1/fees/runs/preview').send({ period: PERIOD }).expect(200);
+    const billable = preview.body.rows.filter((r: { alreadyInvoiced: boolean }) => !r.alreadyInvoiced);
+    expect(billable).toHaveLength(1);
+    expect(billable[0].studentId).toBe(studentId);
+
+    const commit = await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+    expect(commit.body.created).toBe(1);
+
+    const reissued = await as.get(`/api/v1/fees/invoices/${invoiceId}`).expect(200);
+    expect(reissued.body).toMatchObject({ status: 'DUE', totalRupees: 1_500 });
+
+    // The other student's original invoice was left alone.
+    const untouched = await as.get(`/api/v1/fees/invoices/${other.studentId}:${PERIOD}`).expect(200);
+    expect(untouched.body.totalRupees).toBe(1_200);
   });
 });
 

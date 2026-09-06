@@ -1,13 +1,16 @@
 import { PAYMENT_MODE_LABELS, classLabel, formatINR } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Ban, Printer, Undo2 } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeft, Ban, Printer, Trash2, Undo2 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { feeKeys, feesApi } from '@/api/fees';
+import { studentKeys } from '@/api/students';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
-import { ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
+import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
+import { Modal } from '@/components/ui/Modal';
 import { RecordPaymentCard } from '@/components/fees/RecordPaymentCard';
 import { WhatsAppInvoiceButton } from '@/components/fees/WhatsAppInvoiceButton';
 import { formatDate } from '@/lib/utils';
@@ -40,6 +43,20 @@ export function InvoiceDetailPage() {
     onSuccess: refresh,
   });
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const deleteInvoice = useMutation({
+    mutationFn: () => feesApi.deleteInvoice(invoiceId),
+    onSuccess: () => {
+      refresh();
+      // Any charge this invoice carried is pending again, and the student's outstanding has
+      // moved — both are read on the student page, from a different key.
+      queryClient.invalidateQueries({ queryKey: studentKeys.all });
+      // This page's own query would 404 on the next fetch.
+      navigate('/fees/invoices');
+    },
+  });
+
   if (invoice.isPending) return <LoadingBlock />;
   if (invoice.error) {
     return (
@@ -54,6 +71,10 @@ export function InvoiceDetailPage() {
 
   const data = invoice.data;
   const canPay = data.status !== 'PAID' && data.status !== 'VOID';
+  // Any payment at all blocks it, reversed ones included — a reversed receipt is still listed
+  // on the collection report, and deleting the invoice would take it with them. Mirrors the
+  // server's guard so the button says no before the request does.
+  const canDelete = data.payments.length === 0;
 
   return (
     <>
@@ -233,11 +254,79 @@ export function InvoiceDetailPage() {
             </Card>
           )}
 
+          {/* Voiding leaves the month billed — the run's "already invoiced" check ignores status
+              and the key {studentId}:{period} stays taken — so deleting is the only way to
+              correct a bad run. Kept on the detail page, not the list, so it follows reading
+              the invoice. */}
+          <Card>
+            <CardHeader
+              title="Delete invoice"
+              description="For a bill raised in error, so the month can be run again."
+            />
+            <CardBody>
+              <Button
+                variant="secondary"
+                className="w-full text-red-600"
+                disabled={!canDelete || deleteInvoice.isPending}
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+                Delete
+              </Button>
+              <p className="mt-2 text-xs text-slate-500">
+                {canDelete
+                  ? 'Fix the fee structure or the student record, then re-run the same month.'
+                  : 'Payments are recorded. Reverse them and void this invoice instead — deleting would take their receipt numbers off the collection report.'}
+              </p>
+            </CardBody>
+          </Card>
+
           <Button variant="ghost" className="w-full" onClick={() => navigate('/fees/invoices')}>
             Back to invoices
           </Button>
         </div>
       </div>
+
+      {confirmDelete && (
+        <Modal
+          open
+          onClose={() => setConfirmDelete(false)}
+          title="Delete this invoice?"
+          description={`${data.studentName} · ${classLabel(data.classCode)} · ${data.period} · ${formatINR(data.totalRupees)}`}
+        >
+          <div className="space-y-3 px-5 py-4 text-sm text-slate-600">
+            <p>
+              The bill goes for good — this is not a void, nothing is left on the record to show it
+              was ever raised, and the audit log is the only trace.
+            </p>
+            <p>
+              Any charges it absorbed go back to waiting, and re-running{' '}
+              <span className="font-medium text-slate-800">{data.period}</span> will re-issue it for
+              this student alone. Fix the fee structure or the student record first.
+            </p>
+            {deleteInvoice.error && <ErrorBlock message={(deleteInvoice.error as Error).message} />}
+          </div>
+          <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleteInvoice.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={deleteInvoice.isPending}
+              onClick={() => deleteInvoice.mutate()}
+            >
+              {deleteInvoice.isPending && <Spinner />}
+              Delete invoice
+            </Button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

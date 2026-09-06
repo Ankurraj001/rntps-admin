@@ -626,6 +626,39 @@ export async function voidInvoice(invoiceIdValue: string, reason: string): Promi
 }
 
 /**
+ * Removes an invoice outright, so the month can be billed again.
+ *
+ * Voiding is not enough to correct a bad run. The run's "already invoiced" set is keyed on the
+ * period alone, and the primary key `{studentId}:{period}` stays occupied either way — so a
+ * student billed with a head missing could never be re-billed for that month. Deleting frees
+ * both, and the next preview rebuilds the invoice from current data rather than patching a
+ * document full of snapshots and derived totals.
+ *
+ * The guard is stricter than `voidInvoice`, which lets an invoice through once its payments are
+ * reversed. A reversed payment still holds a receipt number that the collection report lists,
+ * struck through, precisely so a bounced cheque leaves no gap when reconciling against the bank.
+ * Deleting the document would make that receipt vanish. So: any payment at all, and this refuses.
+ *
+ * The caller records the deleted invoice in the audit log, which is why this returns it rather
+ * than a bare boolean.
+ */
+export async function deleteInvoice(invoiceIdValue: string): Promise<InvoiceDto> {
+  const invoice = await Invoice.findById(invoiceIdValue).lean<InvoiceDoc>();
+  if (!invoice) throw AppError.notFound(`No invoice found with ID ${invoiceIdValue}`);
+
+  if (invoice.payments.length > 0) {
+    throw AppError.badRequest(
+      'This invoice has payments recorded. Reverse them and void it instead — deleting would erase receipt numbers from the collection report',
+    );
+  }
+
+  // Read the DTO before the document goes, so the route has something to audit.
+  const removed = await getInvoice(invoiceIdValue);
+  await Invoice.deleteOne({ _id: invoiceIdValue });
+  return removed;
+}
+
+/**
  * Everything a parent needs on one slip: this month's charges, plus whatever is still
  * outstanding from before, and a single figure that clears both.
  *

@@ -109,11 +109,13 @@ export async function createExpense(
 /**
  * Removes an expense outright.
  *
- * The one hard delete among this system's money records — invoices are voided and payments
- * reversed, because a receipt is in a parent's hands and the trail has to survive. An
- * expense has no counterpart holding a copy and nothing pointing at it, so there is nothing
- * to preserve except the fact that it happened. The caller records the deleted values in the
- * audit log, which is why this returns them rather than a bare boolean.
+ * One of the two hard deletes among this system's money records — the other being an invoice
+ * nobody ever paid against. Payments are always reversed rather than removed, and an invoice
+ * with any payment on it is voided rather than deleted, because a receipt is in a parent's
+ * hands and the trail has to survive. An expense has no counterpart holding a copy and nothing
+ * pointing at it, so there is nothing to preserve except the fact that it happened. The caller
+ * records the deleted values in the audit log, which is why this returns them rather than a
+ * bare boolean.
  */
 export async function deleteExpense(id: string): Promise<ExpenseDto | null> {
   const removed = await Expense.findByIdAndDelete(id).lean<ExpenseDoc>();

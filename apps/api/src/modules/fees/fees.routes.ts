@@ -183,6 +183,42 @@ feesRoutes.post(
   }),
 );
 
+// Deleting is for a bill raised in error that nobody has paid against — the only way to correct a
+// run, since the period stays occupied whether the invoice is void or not. No body: `voidReason`
+// exists because the fee slip prints it, and a deleted invoice has nothing left to print it on.
+feesRoutes.delete(
+  '/invoices/:invoiceId',
+  asyncHandler(async (req, res) => {
+    const invoiceId = String(req.params.invoiceId);
+    const removed = await service.deleteInvoice(invoiceId);
+
+    // `before` carries the invoice itself, not just its id: this is a hard delete, so once the
+    // document is gone this log line is the only remaining trace that the bill was ever raised.
+    await recordAudit(req, {
+      action: 'invoice.delete',
+      entity: 'invoice',
+      entityId: invoiceId,
+      before: {
+        studentId: removed.studentId,
+        // The name and class are snapshots taken when the bill was raised — after a promotion
+        // or a rename the invoice is the only place they survive, so the trace keeps them.
+        studentName: removed.studentName,
+        classCode: removed.classCode,
+        academicYear: removed.academicYear,
+        period: removed.period,
+        dueDate: removed.dueDate,
+        status: removed.status,
+        grossRupees: removed.grossRupees,
+        concessionRupees: removed.concessionRupees,
+        totalRupees: removed.totalRupees,
+        lineItems: removed.lineItems,
+      },
+    });
+
+    res.json({ deleted: true });
+  }),
+);
+
 feesRoutes.get(
   '/students/:studentId/invoices',
   asyncHandler(async (req, res) => {
