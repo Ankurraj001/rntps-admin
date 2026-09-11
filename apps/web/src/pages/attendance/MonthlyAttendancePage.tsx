@@ -140,7 +140,9 @@ export function MonthlyAttendancePage() {
                         </th>
                       );
                     })}
-                    <th scope="col" className="px-3 py-2 text-right font-medium">%</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-medium">
+                      Present / %
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -179,9 +181,17 @@ export function MonthlyAttendancePage() {
                         {row.totals.workingDays === 0 ? (
                           <span className="text-slate-400">—</span>
                         ) : (
-                          <Badge tone={row.totals.percentage >= 75 ? 'green' : 'red'}>
-                            {row.totals.percentage}%
-                          </Badge>
+                          /* The raw count sits beside the percentage: "75%" reads very
+                             differently over 4 working days than over 24, and the grid's
+                             own columns are too narrow to count by eye. */
+                          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                            <span className="tabular-nums text-xs text-slate-500">
+                              {row.totals.present}/{row.totals.workingDays}
+                            </span>
+                            <Badge tone={row.totals.percentage >= 75 ? 'green' : 'red'}>
+                              {row.totals.percentage}%
+                            </Badge>
+                          </div>
                         )}
                       </td>
                     </tr>

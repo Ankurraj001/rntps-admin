@@ -635,9 +635,16 @@ function StudentAttendanceTab({ studentId }: { studentId: string }) {
                 totals.workingDays === 0 ? (
                   '—'
                 ) : (
-                  <Badge tone={totals.percentage >= 75 ? 'green' : 'red'}>
-                    {totals.percentage}%
-                  </Badge>
+                  // The fraction the percentage came from, spelled out next to it — 75%
+                  // of 4 working days and 75% of 240 are not the same claim.
+                  <span className="flex items-center gap-2">
+                    <Badge tone={totals.percentage >= 75 ? 'green' : 'red'}>
+                      {totals.percentage}%
+                    </Badge>
+                    <span className="text-xs tabular-nums text-slate-500">
+                      {totals.present}/{totals.workingDays} days
+                    </span>
+                  </span>
                 )
               }
             />
