@@ -8,6 +8,7 @@ import { settingsApi, settingsKeys } from '@/api/settings';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { DateInput } from '@/components/ui/DateInput';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input } from '@/components/ui/Field';
 import { formatDate } from '@/lib/utils';
@@ -223,13 +224,12 @@ function HolidaysCard({ holidays }: { holidays: Holiday[] }) {
             htmlFor="holiday-date"
             error={invalid ? 'Sundays are already a holiday' : undefined}
           >
-            <Input
+            <DateInput
               id="holiday-date"
-              type="date"
               className="w-44"
               value={dateKey}
               aria-invalid={invalid ? true : undefined}
-              onChange={(e) => setDateKey(e.target.value)}
+              onChange={setDateKey}
             />
           </Field>
           <Field label="Reason" htmlFor="holiday-reason" className="min-w-48 flex-1">

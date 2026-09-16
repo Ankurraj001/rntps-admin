@@ -187,6 +187,20 @@ rupees rather than silently absorbing the remainder.
 **Days are `dateKey` strings** (`"YYYY-MM-DD"`) computed in Asia/Kolkata. Comparing raw `Date`
 objects across timezones produces off-by-one-day attendance bugs.
 
+**Dates are written and read as `dd-mm-yyyy`,** never in the browser's locale. A native
+`<input type="date">` renders in whatever format the machine is set to, so the same form shows
+`09-10` as October 9th on one laptop and September 10th on another — an ambiguity a school register
+cannot carry. Every date field is `components/ui/DateInput.tsx`, a text box this app formats itself
+with the platform calendar kept behind a button; `formatDate()` in `apps/web/src/lib/utils.ts` does
+the same for read-only dates. The value on the wire is still a `dateKey`; only the display is
+reordered.
+
+**Names of people are stored upper case.** `fullName` and every guardian `name` go through
+`.trim().toUpperCase()` in `packages/shared/src/schemas/student.ts`, so the registers, fee slips and
+WhatsApp reminders all read the way the school writes them by hand. It is enforced in the schema
+rather than the form, so an import or a direct API call is normalised too. Records created before
+this rule keep the casing they were saved with.
+
 **Single-document writes.** Payments will be embedded in their invoice, so recording a payment is one
 atomic update pipeline rather than a multi-document transaction. This is what removes the replica-set
 requirement.

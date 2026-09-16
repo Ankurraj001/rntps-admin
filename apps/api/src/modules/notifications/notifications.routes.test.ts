@@ -112,8 +112,8 @@ describe('POST /notifications', () => {
     const item = res.body.items[0];
     expect(item.students).toHaveLength(2);
     expect(item.totalDueRupees).toBe(2_400);
-    expect(item.renderedMessage).toContain('Aarav Sharma');
-    expect(item.renderedMessage).toContain('Ananya Sharma');
+    expect(item.renderedMessage).toContain('AARAV SHARMA');
+    expect(item.renderedMessage).toContain('ANANYA SHARMA');
     expect(item.invoiceIds).toHaveLength(2);
   });
 
@@ -150,7 +150,7 @@ describe('POST /notifications', () => {
 
     expect(res.body.totalCount).toBe(1);
     expect(res.body.unreachable).toHaveLength(1);
-    expect(res.body.unreachable[0]).toMatchObject({ fullName: 'Opted Out' });
+    expect(res.body.unreachable[0]).toMatchObject({ fullName: 'OPTED OUT' });
   });
 
   it('reflects a part payment in the amount chased', async () => {
@@ -208,7 +208,7 @@ describe('POST /notifications', () => {
 
     const res = await as.post('/api/v1/notifications').send({ period: PERIOD, classCodes: ['5'] }).expect(201);
     expect(res.body.totalCount).toBe(1);
-    expect(res.body.items[0].students[0].fullName).toBe('In Five');
+    expect(res.body.items[0].students[0].fullName).toBe('IN FIVE');
   });
 
   it('itemises the bill instead of quoting one lump sum', async () => {
@@ -242,8 +242,8 @@ describe('POST /notifications', () => {
     const res = await as.post('/api/v1/notifications').send({ period: PERIOD }).expect(201);
     const message = res.body.items[0].renderedMessage as string;
 
-    expect(message).toContain('Aarav Sharma · Std. 5');
-    expect(message).toContain('Ananya Sharma · Std. 2');
+    expect(message).toContain('AARAV SHARMA · Std. 5');
+    expect(message).toContain('ANANYA SHARMA · Std. 2');
     expect(message).toContain('FAMILY TOTAL');
     expect(message.match(/Subtotal/g)).toHaveLength(2);
     // A family sees a family total, never the single-child header.
@@ -490,7 +490,7 @@ describe('GET /notifications/invoices/:invoiceId/whatsapp-link', () => {
 
     expect(res.body.guardianPhone).toBe('919876543210');
     expect(res.body.waLink).toMatch(/^https:\/\/wa\.me\/919876543210\?text=/);
-    expect(decodeURIComponent(res.body.waLink.split('text=')[1])).toContain('Aarav Sharma');
+    expect(decodeURIComponent(res.body.waLink.split('text=')[1])).toContain('AARAV SHARMA');
   });
 
   it('rolls other outstanding invoices into "Previous dues"', async () => {

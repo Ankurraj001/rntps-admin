@@ -13,7 +13,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { feeKeys, feesApi } from '@/api/fees';
 import { studentKeys, studentsApi } from '@/api/students';
@@ -21,6 +21,7 @@ import { SiblingPicker } from '@/components/students/SiblingPicker';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { DateInput } from '@/components/ui/DateInput';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { ApiError } from '@/lib/api';
@@ -251,11 +252,32 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
           <CardHeader title="Student details" />
           <CardBody className="grid gap-4 sm:grid-cols-2">
             <Field label="Full name" htmlFor="fullName" required error={errors.fullName?.message} className="sm:col-span-2">
-              <Input id="fullName" autoFocus placeholder="e.g. Aarav Sharma" {...form.register('fullName')} />
+              {/* Names are stored upper case (see `personNameField`); showing them that way
+                  as they are typed keeps the field honest about what will be saved. */}
+              <Input
+                id="fullName"
+                autoFocus
+                className="uppercase placeholder:normal-case"
+                placeholder="e.g. Aarav Sharma"
+                {...form.register('fullName')}
+              />
             </Field>
 
             <Field label="Date of birth" htmlFor="dob" required error={errors.dob?.message}>
-              <Input id="dob" type="date" {...form.register('dob')} />
+              <Controller
+                control={form.control}
+                name="dob"
+                render={({ field }) => (
+                  <DateInput
+                    id="dob"
+                    name={field.name}
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    aria-invalid={errors.dob ? true : undefined}
+                  />
+                )}
+              />
             </Field>
 
             <Field label="Gender" htmlFor="gender" required error={errors.gender?.message}>
@@ -289,7 +311,20 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
             </Field>
 
             <Field label="Admission date" htmlFor="admissionDate" required error={errors.admissionDate?.message}>
-              <Input id="admissionDate" type="date" {...form.register('admissionDate')} />
+              <Controller
+                control={form.control}
+                name="admissionDate"
+                render={({ field }) => (
+                  <DateInput
+                    id="admissionDate"
+                    name={field.name}
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    aria-invalid={errors.admissionDate ? true : undefined}
+                  />
+                )}
+              />
             </Field>
 
             {mode === 'create' && (
@@ -380,7 +415,11 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
               <div key={field.id} className="rounded-md border border-slate-200 p-4">
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Field label="Name" required error={errors.guardians?.[index]?.name?.message}>
-                    <Input placeholder="Guardian name" {...form.register(`guardians.${index}.name`)} />
+                    <Input
+                      className="uppercase placeholder:normal-case"
+                      placeholder="Guardian name"
+                      {...form.register(`guardians.${index}.name`)}
+                    />
                   </Field>
 
                   <Field label="Relation" required error={errors.guardians?.[index]?.relation?.message}>

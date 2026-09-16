@@ -11,7 +11,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { cn, displayPhone } from '@/lib/utils';
+import { cn, displayPhone, formatDateTime } from '@/lib/utils';
 
 /**
  * How a batch's class filter reads back.
@@ -226,7 +226,7 @@ export function NotificationsPage() {
                     <span className="min-w-0">
                       <span className="font-medium">{batch.filter.period ?? 'All unpaid months'}</span>
                       <span className="ml-2 text-slate-500">
-                        {new Date(batch.createdAt).toLocaleString('en-IN')}
+                        {formatDateTime(batch.createdAt)}
                       </span>
                     </span>
                     <span className="flex items-center gap-2">
@@ -245,7 +245,7 @@ export function NotificationsPage() {
                   <button
                     type="button"
                     className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50"
-                    aria-label={`Delete batch from ${new Date(batch.createdAt).toLocaleString('en-IN')}`}
+                    aria-label={`Delete batch from ${formatDateTime(batch.createdAt)}`}
                     title="Delete batch"
                     disabled={remove.isPending}
                     onClick={() => setPendingDelete(batch)}
@@ -271,7 +271,7 @@ export function NotificationsPage() {
         >
           <div className="space-y-3 px-5 py-4 text-sm text-slate-600">
             <p>
-              Built {new Date(pendingDelete.createdAt).toLocaleString('en-IN')} ·{' '}
+              Built {formatDateTime(pendingDelete.createdAt)} ·{' '}
               {pendingDelete.sentCount}/{pendingDelete.totalCount} marked sent
               {pendingDelete.skippedCount > 0 && ` · ${pendingDelete.skippedCount} skipped`}.
             </p>
@@ -467,7 +467,7 @@ function QueueView({ batchId, onClose }: { batchId: string; onClose: () => void 
                       app cannot know the parent received anything. */}
                   {item.status === 'SENT' && item.sentAt && (
                     <p className="text-xs text-slate-500">
-                      Marked sent {new Date(item.sentAt).toLocaleString('en-IN')} — WhatsApp does not
+                      Marked sent {formatDateTime(item.sentAt)} — WhatsApp does not
                       report delivery.
                     </p>
                   )}

@@ -61,7 +61,7 @@ describe('PUT /academics/marks', () => {
 
     expect(res.body.items[0]).toMatchObject({
       studentId,
-      fullName: 'Aarav Sharma',
+      fullName: 'AARAV SHARMA',
       classCode: '5',
       rollNo: 1,
       hasRecord: true,
@@ -163,7 +163,7 @@ describe('GET /academics', () => {
       .expect(200);
 
     expect(res.body.total).toBe(1);
-    expect(res.body.items[0].fullName).toBe('Diya Verma');
+    expect(res.body.items[0].fullName).toBe('DIYA VERMA');
   });
 
   it('sorts unmarked students last in both directions', async () => {

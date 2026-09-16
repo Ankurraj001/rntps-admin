@@ -173,9 +173,9 @@ describe('per-student transport fares through the invoice run', () => {
       ]),
     );
 
-    expect(byName['Near Stop']).toMatchObject({ totalRupees: 1_600, transportOverridden: true });
-    expect(byName['Far Stop']).toMatchObject({ totalRupees: 2_150, transportOverridden: true });
-    expect(byName['Default Stop']).toMatchObject({ totalRupees: 1_800, transportOverridden: false });
+    expect(byName['NEAR STOP']).toMatchObject({ totalRupees: 1_600, transportOverridden: true });
+    expect(byName['FAR STOP']).toMatchObject({ totalRupees: 2_150, transportOverridden: true });
+    expect(byName['DEFAULT STOP']).toMatchObject({ totalRupees: 1_800, transportOverridden: false });
   });
 
   it('carries the overridden fare onto the committed invoice', async () => {
@@ -232,8 +232,8 @@ describe('per-student transport fares through the invoice run', () => {
       (res.body.rows as { fullName: string; totalRupees: number }[]).map((r) => [r.fullName, r.totalRupees]),
     );
 
-    expect(totals['Student A']).toBe(1_500);
-    expect(totals['Student B']).toBe(1_800);
+    expect(totals['STUDENT A']).toBe(1_500);
+    expect(totals['STUDENT B']).toBe(1_800);
   });
 
   it('clearing the override restores the class default', async () => {
@@ -268,9 +268,9 @@ describe('per-student transport fares through the invoice run', () => {
       (res.body.rows as { fullName: string; totalRupees: number }[]).map((r) => [r.fullName, r.totalRupees]),
     );
 
-    expect(totals['On Default']).toBe(1_900);
+    expect(totals['ON DEFAULT']).toBe(1_900);
     // The override is unaffected by the class change, which is the point of it.
-    expect(totals['On Override']).toBe(2_150);
+    expect(totals['ON OVERRIDE']).toBe(2_150);
   });
 
   it('rejects a negative or fractional fare', async () => {

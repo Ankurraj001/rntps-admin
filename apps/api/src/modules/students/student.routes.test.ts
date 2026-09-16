@@ -323,8 +323,9 @@ describe('editing a student after onboarding', () => {
       })
       .expect(200);
 
+    // Sent as "Aarav Kumar Sharma"; names are stored upper case.
     expect(res.body).toMatchObject({
-      fullName: 'Aarav Kumar Sharma',
+      fullName: 'AARAV KUMAR SHARMA',
       classCode: '6',
       rollNo: 4,
       transportOpted: true,
@@ -345,7 +346,7 @@ describe('editing a student after onboarding', () => {
       .expect(200);
 
     expect(res.body.guardians).toHaveLength(1);
-    expect(res.body.guardians[0]).toMatchObject({ name: 'Sunita Sharma', phone: '919876543299' });
+    expect(res.body.guardians[0]).toMatchObject({ name: 'SUNITA SHARMA', phone: '919876543299' });
   });
 
   it('updates a concession, which changes what the next invoice bills', async () => {

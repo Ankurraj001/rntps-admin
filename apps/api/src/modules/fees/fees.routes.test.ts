@@ -131,8 +131,8 @@ describe('invoice run', () => {
     const res = await as.post('/api/v1/fees/runs/preview').send({ period: PERIOD }).expect(200);
     const rows = res.body.rows as { fullName: string; totalRupees: number }[];
 
-    expect(rows.find((r) => r.fullName === 'With Bus')?.totalRupees).toBe(1_800);
-    expect(rows.find((r) => r.fullName === 'No Bus')?.totalRupees).toBe(1_200);
+    expect(rows.find((r) => r.fullName === 'WITH BUS')?.totalRupees).toBe(1_800);
+    expect(rows.find((r) => r.fullName === 'NO BUS')?.totalRupees).toBe(1_200);
   });
 
   it('applies a percentage concession, rounded to the rupee', async () => {
@@ -621,7 +621,7 @@ describe('deleting an invoice', () => {
     expect(entry?.before).toMatchObject({
       studentId,
       // The snapshots go too: after a promotion the invoice was the only record of the class.
-      studentName: 'Aarav Sharma',
+      studentName: 'AARAV SHARMA',
       classCode: '5',
       period: PERIOD,
       status: 'DUE',
@@ -675,7 +675,7 @@ describe('listing invoices', () => {
 
   it('searches by student name', async () => {
     const res = await as.get('/api/v1/fees/invoices?q=kabir').expect(200);
-    expect(res.body.items[0].studentName).toBe('Kabir Singh');
+    expect(res.body.items[0].studentName).toBe('KABIR SINGH');
   });
 
   it('marks invoices past their due date as overdue', async () => {
@@ -721,9 +721,9 @@ describe('family balance', () => {
     const byName = new Map(
       res.body.children.map((c: { fullName: string; outstandingRupees: number }) => [c.fullName, c]),
     );
-    expect(byName.get('Aarav Sharma').outstandingRupees).toBe(1_200);
-    expect(byName.get('Bela Sharma').outstandingRupees).toBe(0);
-    expect(byName.get('Chetan Sharma').outstandingRupees).toBe(1_200);
+    expect(byName.get('AARAV SHARMA').outstandingRupees).toBe(1_200);
+    expect(byName.get('BELA SHARMA').outstandingRupees).toBe(0);
+    expect(byName.get('CHETAN SHARMA').outstandingRupees).toBe(1_200);
     expect(res.body.totalOutstandingRupees).toBe(2_400);
     expect(youngest.familyId).toBe(elder.familyId);
   });
@@ -748,7 +748,7 @@ describe('family balance', () => {
     const res = await as.get(`/api/v1/fees/families/${student.familyId}/balance`).expect(200);
 
     expect(res.body.children).toEqual([
-      { studentId: student.studentId, fullName: 'Solo Sharma', classCode: '5', outstandingRupees: 0, invoiceCount: 0 },
+      { studentId: student.studentId, fullName: 'SOLO SHARMA', classCode: '5', outstandingRupees: 0, invoiceCount: 0 },
     ]);
   });
 });

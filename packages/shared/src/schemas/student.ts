@@ -27,8 +27,19 @@ const dateKeyField = z
   .refine(isValidDateKey, 'Enter a valid date')
   .describe('YYYY-MM-DD');
 
+/**
+ * People's names are stored upper case.
+ *
+ * The school's registers, TCs and fee slips are all written that way by hand, and an admin
+ * typing "aarav sharma" at 8am should not produce a record that sorts and prints unlike
+ * every other one. Normalising here rather than in the form means it holds for the API too,
+ * so an import or a direct call cannot slip a mixed-case name past it.
+ */
+const personNameField = (message: string) =>
+  z.string().trim().toUpperCase().min(2, message).max(80);
+
 export const guardianSchema = z.object({
-  name: z.string().trim().min(2, 'Guardian name is required').max(80),
+  name: personNameField('Guardian name is required'),
   relation: z.enum(GUARDIAN_RELATIONS),
   phone: phoneInputSchema,
   isPrimary: z.boolean().default(false),
@@ -104,7 +115,7 @@ export const createStudentSchema = z
         .toUpperCase()
         .regex(/^[A-Z0-9][A-Z0-9-]{2,29}$/, 'Use letters, digits and hyphens (3-30 characters)'),
     ),
-    fullName: z.string().trim().min(2, 'Full name is required').max(80),
+    fullName: personNameField('Full name is required'),
     dob: dateKeyField,
     gender: z.enum(GENDERS),
     classCode: z.enum(CLASS_CODES),

@@ -18,9 +18,10 @@ import { PageHeader } from '@/components/layout/AppShell';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
+import { DateInput } from '@/components/ui/DateInput';
 import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
-import { Input, Select } from '@/components/ui/Field';
-import { cn } from '@/lib/utils';
+import { Select } from '@/components/ui/Field';
+import { cn, formatDateTime } from '@/lib/utils';
 
 /**
  * What a single row can be set to.
@@ -261,12 +262,11 @@ export function MarkAttendancePage() {
 
             <label className="text-sm">
               <span className="mb-1.5 block font-medium text-slate-700">Date</span>
-              <Input
-                type="date"
+              <DateInput
                 className="w-44"
                 max={toDateKey()}
                 value={dateKey}
-                onChange={(event) => setDateKey(event.target.value)}
+                onChange={setDateKey}
               />
             </label>
 
@@ -318,7 +318,7 @@ export function MarkAttendancePage() {
         {active.data?.submittedAt && (
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-3 text-sm text-slate-700">
             <Info className="h-4 w-4 shrink-0" aria-hidden />
-            Already submitted {new Date(active.data.submittedAt).toLocaleString('en-IN')} — saving again
+            Already submitted {formatDateTime(active.data.submittedAt)} — saving again
             replaces it.
           </div>
         )}

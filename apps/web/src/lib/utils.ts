@@ -12,11 +12,12 @@ export function displayPhone(stored: string): string {
   return local.replace(/(\d{5})(\d{5})/, '$1 $2');
 }
 
+/** Renders a dateKey the way the school writes dates: "2026-09-16" -> "16-09-2026". */
 export function formatDate(dateKey: string): string {
   if (!dateKey) return '—';
   const [y, m, d] = dateKey.split('-');
   if (!y || !m || !d) return dateKey;
-  return `${d}/${m}/${y}`;
+  return `${d}-${m}-${y}`;
 }
 
 const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-IN', {

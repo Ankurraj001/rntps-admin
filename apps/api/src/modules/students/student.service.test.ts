@@ -10,9 +10,18 @@ beforeEach(async () => {
   await seedSettings();
 });
 
+/**
+ * Filter matching a seeded student by the name the test typed.
+ *
+ * Names are stored upper case (`personNameField`), so a literal lookup for the mixed-case
+ * name a test seeded with finds nothing — silently, as a missing document rather than a
+ * failed assertion.
+ */
+const named = (fullName: string) => ({ fullName: fullName.toUpperCase() });
+
 /** The generated studentId for a seeded student, since tests refer to them by name. */
 async function idOf(fullName: string): Promise<string> {
-  const student = await Student.findOne({ fullName }).lean();
+  const student = await Student.findOne(named(fullName)).lean();
   if (!student) throw new Error(`no student named ${fullName}`);
   return student._id;
 }
@@ -135,10 +144,10 @@ describe('listStudents', () => {
 
   it('searches by name and by studentId', async () => {
     const byName = await service.listStudents(listQuery({ q: 'diya' }));
-    expect(byName.items[0]?.fullName).toBe('Diya Verma');
+    expect(byName.items[0]?.fullName).toBe('DIYA VERMA');
 
     const byId = await service.listStudents(listQuery({ q: 'RNTPS-26-003' }));
-    expect(byId.items[0]?.fullName).toBe('Kabir Singh');
+    expect(byId.items[0]?.fullName).toBe('KABIR SINGH');
   });
 
   it('treats regex metacharacters in the search term literally', async () => {
@@ -201,7 +210,7 @@ describe('promoteStudents', () => {
     expect(result.dryRun).toBe(true);
     expect(result.promoted).toHaveLength(2);
     expect(result.graduated).toHaveLength(1);
-    const unchanged = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    const unchanged = await Student.findOne(named('Nursery Kid')).lean();
     expect(unchanged?.classCode).toBe('NURSERY');
     expect(unchanged?.academicYear).toBe('2026-27');
   });
@@ -209,9 +218,9 @@ describe('promoteStudents', () => {
   it('moves each class up one step and graduates class 8', async () => {
     await service.promoteStudents({ ...years, dryRun: false });
 
-    const nursery = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
-    const ukg = await Student.findOne({ fullName: 'UKG Kid' }).lean();
-    const eighth = await Student.findOne({ fullName: 'Class 8 Kid' }).lean();
+    const nursery = await Student.findOne(named('Nursery Kid')).lean();
+    const ukg = await Student.findOne(named('UKG Kid')).lean();
+    const eighth = await Student.findOne(named('Class 8 Kid')).lean();
 
     expect(nursery?.classCode).toBe('LKG');
     expect(ukg?.classCode).toBe('1');
@@ -240,7 +249,7 @@ describe('promoteStudents', () => {
 
     expect(second.promoted).toHaveLength(0);
     expect(second.graduated).toHaveLength(0);
-    const ukg = await Student.findOne({ fullName: 'UKG Kid' }).lean();
+    const ukg = await Student.findOne(named('UKG Kid')).lean();
     expect(ukg?.classCode).toBe('1');
   });
 
@@ -265,7 +274,7 @@ describe('promoteStudents', () => {
       service.promoteStudents({ fromAcademicYear: '2026-27', toAcademicYear: '2028-29', dryRun: false }),
     ).rejects.toThrow(/one session to the next/i);
 
-    const nursery = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    const nursery = await Student.findOne(named('Nursery Kid')).lean();
     expect(nursery?.classCode).toBe('NURSERY');
   });
 
@@ -282,14 +291,14 @@ describe('promoteStudents', () => {
   it('reports an unrecognised class instead of graduating it', async () => {
     // nextClassCode returns null both for class 8 and for a code it does not know, and
     // treating those the same silently turned a corrupt record into an alumnus.
-    await Student.updateOne({ fullName: 'UKG Kid' }, { $set: { classCode: 'CLASS_IX' } });
+    await Student.updateOne(named('UKG Kid'), { $set: { classCode: 'CLASS_IX' } });
 
     const result = await service.promoteStudents({ ...years, dryRun: false });
 
     expect(result.skipped).toEqual([
       { studentId: expect.any(String), reason: expect.stringContaining('CLASS_IX') },
     ]);
-    const stranded = await Student.findOne({ fullName: 'UKG Kid' }).lean();
+    const stranded = await Student.findOne(named('UKG Kid')).lean();
     expect(stranded?.status).toBe('ACTIVE');
     expect(stranded?.classCode).toBe('CLASS_IX');
   });
@@ -300,14 +309,14 @@ describe('promoteStudents', () => {
 
     const result = await service.promoteStudents({ ...years, dryRun: false });
 
-    const tc = await Student.findOne({ fullName: 'UKG Kid' }).lean();
+    const tc = await Student.findOne(named('UKG Kid')).lean();
     expect(tc?.status).toBe('ALUMNI');
     // No next class for a leaver, so the class they left from is preserved.
     expect(tc?.classCode).toBe('UKG');
     expect(tc?.academicYear).toBe('2027-28');
 
     // Already off the roll — frozen in the session they left, which is accurate history.
-    const inactive = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    const inactive = await Student.findOne(named('Nursery Kid')).lean();
     expect(inactive?.status).toBe('INACTIVE');
     expect(inactive?.classCode).toBe('NURSERY');
     expect(inactive?.academicYear).toBe('2026-27');
@@ -320,8 +329,8 @@ describe('promoteStudents', () => {
     const result = await service.promoteStudents({ ...years, classCodes: ['UKG'], dryRun: false });
 
     expect(result.promoted).toHaveLength(1);
-    const ukg = await Student.findOne({ fullName: 'UKG Kid' }).lean();
-    const nursery = await Student.findOne({ fullName: 'Nursery Kid' }).lean();
+    const ukg = await Student.findOne(named('UKG Kid')).lean();
+    const nursery = await Student.findOne(named('Nursery Kid')).lean();
     expect(ukg?.classCode).toBe('1');
     expect(nursery?.classCode).toBe('NURSERY');
   });
@@ -402,7 +411,7 @@ describe('data-quality reports', () => {
     await Student.updateOne({ _id: optedOut.studentId }, { $set: { 'guardians.0.whatsappOptOut': true } });
 
     const flagged = await service.studentsWithoutWhatsapp();
-    expect(flagged.map((s) => s.fullName)).toEqual(['Opted Out']);
+    expect(flagged.map((s) => s.fullName)).toEqual(['OPTED OUT']);
   });
 
   it('counts active students per class', async () => {

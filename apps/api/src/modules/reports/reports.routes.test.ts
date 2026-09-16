@@ -132,7 +132,7 @@ describe('GET /reports/dues', () => {
 
     const res = await as.get('/api/v1/reports/dues?classCode=6').expect(200);
     expect(res.body.rows).toHaveLength(1);
-    expect(res.body.rows[0].studentName).toBe('In Six');
+    expect(res.body.rows[0].studentName).toBe('IN SIX');
   });
 
   it('exports CSV with a BOM and an attachment header', async () => {
@@ -142,7 +142,7 @@ describe('GET /reports/dues', () => {
     expect(res.headers['content-type']).toMatch(/text\/csv/);
     expect(res.headers['content-disposition']).toMatch(/attachment; filename="dues-/);
     expect(res.text.charCodeAt(0)).toBe(0xfeff);
-    expect(res.text).toContain('Aarav Sharma');
+    expect(res.text).toContain('AARAV SHARMA');
     // Money is a bare integer, not a formatted currency string — Excel must see a number.
     expect(res.text).toContain(',1200,');
   });

@@ -2,6 +2,7 @@ import {
   CLASS_CODES,
   USER_ROLES,
   classLabel,
+  toDateKey,
   type ClassCode,
   type UserDto,
   type CreateUserInput,
@@ -17,6 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input, Select } from '@/components/ui/Field';
+import { formatDate } from '@/lib/utils';
 
 export function UsersPage() {
   const me = useCurrentUser();
@@ -162,7 +164,7 @@ function UserRow({
           : user.assignedClasses.map((c) => classLabel(c)).join(', ') || '—'}
       </td>
       <td className="px-5 py-3 text-slate-600">
-        {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString('en-IN') : 'Never'}
+        {user.lastLoginAt ? formatDate(toDateKey(new Date(user.lastLoginAt))) : 'Never'}
       </td>
       <td className="px-5 py-3">
         <div className="flex flex-wrap gap-1">

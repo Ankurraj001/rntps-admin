@@ -57,7 +57,7 @@ describe('sendDailyCollectionReport', () => {
 
     expect(result).toMatchObject({ attempted: true, sent: true, rowCount: 1, totalRupees: 500 });
     expect(sentMail().subject).toContain('5 Aug 2026');
-    expect(sentMail().text).toContain('Aarav Sharma');
+    expect(sentMail().text).toContain('AARAV SHARMA');
     expect(sentMail().text).toMatch(/Total: ₹500/);
   });
 

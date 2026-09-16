@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/layout/AppShell';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { DateInput } from '@/components/ui/DateInput';
 import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input, Select } from '@/components/ui/Field';
 import { cn, formatDate } from '@/lib/utils';
@@ -174,11 +175,11 @@ function CollectionReport() {
         <div className="flex flex-wrap items-end gap-3 p-4">
           <label className="text-sm">
             <span className="mb-1.5 block font-medium text-slate-700">From</span>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DateInput value={from} onChange={setFrom} />
           </label>
           <label className="text-sm">
             <span className="mb-1.5 block font-medium text-slate-700">To</span>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <DateInput value={to} onChange={setTo} />
           </label>
           <Button
             variant="secondary"
@@ -536,12 +537,11 @@ function ExpensesReport() {
                 <Field label="Date" required className="sm:col-span-3" error={dateError}>
                   {/* Bounded to the month on screen, so the picker cannot offer a day that
                       would file the expense into a month you are not looking at. */}
-                  <Input
-                    type="date"
+                  <DateInput
                     value={date}
                     min={`${month}-01`}
                     max={lastDayOfPeriod(month)}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={setDate}
                   />
                 </Field>
                 <Field label="What was it for" required className="sm:col-span-5">

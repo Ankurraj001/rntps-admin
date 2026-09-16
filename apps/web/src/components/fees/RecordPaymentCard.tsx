@@ -10,6 +10,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { DateInput } from '@/components/ui/DateInput';
 import { ErrorBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input, Select } from '@/components/ui/Field';
 
@@ -94,7 +95,7 @@ export function RecordPaymentCard({
         </Field>
 
         <Field label="Received on" required>
-          <Input type="date" max={toDateKey()} value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+          <DateInput max={toDateKey()} value={paidAt} onChange={setPaidAt} />
         </Field>
 
         <Field label="Notes">
