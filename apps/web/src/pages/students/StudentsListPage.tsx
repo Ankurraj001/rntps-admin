@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { downloadStudentsCsv, studentKeys, studentsApi, type StudentListParams } from '@/api/students';
 import { PageHeader } from '@/components/layout/AppShell';
-import { StatusBadge } from '@/components/ui/Badge';
+import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
@@ -261,7 +261,11 @@ export function StudentsListPage() {
                               '—'
                             )}
                           </td>
-                          <td className="px-5 py-3 text-slate-600">{student.transportOpted ? 'Yes' : 'No'}</td>
+                          <td className="px-5 py-3">
+                            <Badge tone={student.transportOpted ? 'green' : 'white'}>
+                              {student.transportOpted ? 'Yes' : 'No'}
+                            </Badge>
+                          </td>
                           <td className="px-5 py-3"><StatusBadge status={student.status} /></td>
                           {isAdmin && (
                             <td className="px-5 py-3 text-right">

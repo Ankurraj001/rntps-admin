@@ -6,6 +6,7 @@ const TONES = {
   amber: 'bg-amber-50 text-amber-800 ring-amber-600/20',
   red: 'bg-red-50 text-red-700 ring-red-600/20',
   blue: 'bg-blue-50 text-blue-700 ring-blue-600/20',
+  white: 'bg-white text-slate-600 ring-slate-300',
 } as const;
 
 export type BadgeTone = keyof typeof TONES;
