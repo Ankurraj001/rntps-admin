@@ -36,6 +36,13 @@ async function pay(studentId: string, amountRupees: number, paidAt: string) {
     .expect(201);
 }
 
+async function addGain(name: string, amountRupees: number, dateKey: string) {
+  await as
+    .post('/api/v1/expenses')
+    .send({ dateKey, name, direction: 'INCOME', amountRupees })
+    .expect(201);
+}
+
 /** The body the report would have sent, as the transport would have received it. */
 function sentMail() {
   return sendMail.mock.calls[0]?.[0] as { subject: string; text: string; html: string };
@@ -144,6 +151,44 @@ describe('sendDailyCollectionReport', () => {
   });
 });
 
+describe('recorded income on the day', () => {
+  it("lists the day's income and adds it to what was received", async () => {
+    const student = await billAndInvoice('5', 'Aarav Sharma');
+    await pay(student.studentId, 500, DAY);
+    await addGain('Alumni donation', 50_000, DAY);
+
+    const result = await sendDailyCollectionReport({ dateKey: DAY, to: TO });
+
+    // The fee total stays exactly what the receipt book says, so the digest is still
+    // reconcilable against it; the donation is added alongside rather than folded in.
+    expect(result).toMatchObject({ rowCount: 1, totalRupees: 500, gainCount: 1, gainRupees: 50_000 });
+    expect(sentMail().text).toContain('Alumni donation');
+    expect(sentMail().text).toContain('Total: ₹500');
+    expect(sentMail().text).toContain('Total received: ₹50,500');
+  });
+
+  it('leaves income dated another day out', async () => {
+    await addGain('Yesterday donation', 50_000, '2026-08-04');
+
+    const result = await sendDailyCollectionReport({ dateKey: DAY, to: TO });
+
+    expect(result).toMatchObject({ gainCount: 0, gainRupees: 0 });
+    expect(sentMail().text).not.toContain('Yesterday donation');
+  });
+
+  it('ignores an expense — this digest is about money coming in', async () => {
+    await as
+      .post('/api/v1/expenses')
+      .send({ dateKey: DAY, name: 'Petrol', amountRupees: 800 })
+      .expect(201);
+
+    const result = await sendDailyCollectionReport({ dateKey: DAY, to: TO });
+
+    expect(result).toMatchObject({ gainCount: 0, gainRupees: 0 });
+    expect(sentMail().text).not.toContain('Petrol');
+  });
+});
+
 describe('dailyCollectionEmail', () => {
   it('escapes a student name so it cannot break the markup', () => {
     const body = dailyCollectionEmail({
@@ -159,9 +204,25 @@ describe('dailyCollectionEmail', () => {
         },
       ],
       totals: { count: 1, amountRupees: 500 },
+      gains: [],
+      gainRupees: 0,
     });
 
     expect(body.html).not.toContain('<script>');
     expect(body.html).toContain('&lt;script&gt;');
+  });
+
+  it('does not read as an empty day when only income was recorded', () => {
+    const body = dailyCollectionEmail({
+      dateKey: DAY,
+      rows: [],
+      totals: { count: 0, amountRupees: 0 },
+      gains: [{ dateKey: DAY, name: 'Alumni donation', amountRupees: 50_000 }],
+      gainRupees: 50_000,
+    });
+
+    expect(body.subject).not.toContain('nothing recorded');
+    expect(body.text).toContain('Alumni donation');
+    expect(body.text).toContain('Total received: ₹50,000');
   });
 });

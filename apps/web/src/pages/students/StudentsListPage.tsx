@@ -3,9 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, Pencil, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { downloadStudentsCsv, studentKeys, studentsApi, type StudentListParams } from '@/api/students';
+import {
+  downloadStudentsCsv,
+  studentKeys,
+  studentsApi,
+  type StudentListParams,
+} from '@/api/students';
 import { PageHeader } from '@/components/layout/AppShell';
-import { Badge, StatusBadge } from '@/components/ui/Badge';
+import { Badge, StatusText } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
@@ -110,11 +115,19 @@ export function StudentsListPage() {
     <>
       <PageHeader
         title="Students"
-        description={isAdmin ? 'Onboard students and manage their records.' : 'Directory of students on the roll.'}
+        description={
+          isAdmin
+            ? 'Onboard students and manage their records.'
+            : 'Directory of students on the roll.'
+        }
         action={
           isAdmin ? (
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => void exportCsv()} disabled={exporting || !data?.total}>
+              <Button
+                variant="secondary"
+                onClick={() => void exportCsv()}
+                disabled={exporting || !data?.total}
+              >
                 {exporting ? <Spinner /> : <Download className="h-4 w-4" aria-hidden />}
                 Export CSV
               </Button>
@@ -133,7 +146,10 @@ export function StudentsListPage() {
         <Card>
           <div className="flex flex-wrap items-end gap-3 p-4">
             <div className="relative min-w-64 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                aria-hidden
+              />
               <Input
                 aria-label="Search students"
                 placeholder="Search by name, student ID or phone"
@@ -186,7 +202,11 @@ export function StudentsListPage() {
 
         <Card>
           {isPending && <LoadingBlock label="Loading students…" />}
-          {error && <div className="p-4"><ErrorBlock message={(error as Error).message} onRetry={() => void refetch()} /></div>}
+          {error && (
+            <div className="p-4">
+              <ErrorBlock message={(error as Error).message} onRetry={() => void refetch()} />
+            </div>
+          )}
 
           {data && data.items.length === 0 && (
             <EmptyState
@@ -212,15 +232,49 @@ export function StudentsListPage() {
                 <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th scope="col" className="px-5 py-3 font-medium">Student ID</th>
-                      <SortableHeader label="Name" field="fullName" sort={sort} order={order} onSort={toggleSort} />
-                      <SortableHeader label="Class" field="classCode" sort={sort} order={order} onSort={toggleSort} />
-                      <SortableHeader label="Roll" field="rollNo" sort={sort} order={order} onSort={toggleSort} />
-                      <th scope="col" className="px-5 py-3 font-medium">DOB</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Aadhaar</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Primary guardian</th>
-                      <SortableHeader label="Transport" field="transportOpted" sort={sort} order={order} onSort={toggleSort} />
-                      <th scope="col" className="px-5 py-3 font-medium">Status</th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Student ID
+                      </th>
+                      <SortableHeader
+                        label="Name"
+                        field="fullName"
+                        sort={sort}
+                        order={order}
+                        onSort={toggleSort}
+                      />
+                      <SortableHeader
+                        label="Class"
+                        field="classCode"
+                        sort={sort}
+                        order={order}
+                        onSort={toggleSort}
+                      />
+                      <SortableHeader
+                        label="Roll"
+                        field="rollNo"
+                        sort={sort}
+                        order={order}
+                        onSort={toggleSort}
+                      />
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        DOB
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Aadhaar
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Primary guardian
+                      </th>
+                      <SortableHeader
+                        label="Transport"
+                        field="transportOpted"
+                        sort={sort}
+                        order={order}
+                        onSort={toggleSort}
+                      />
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Status
+                      </th>
                       {isAdmin && (
                         <th scope="col" className="px-5 py-3 font-medium">
                           <span className="sr-only">Actions</span>
@@ -230,22 +284,33 @@ export function StudentsListPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.items.map((student) => {
-                      const primary = student.guardians.find((g) => g.isPrimary) ?? student.guardians[0];
+                      const primary =
+                        student.guardians.find((g) => g.isPrimary) ?? student.guardians[0];
                       return (
                         <tr key={student.studentId} className="hover:bg-slate-50">
                           <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-slate-500">
-                            <Link to={`/students/${student.studentId}`} className="hover:text-brand-700 hover:underline">
+                            <Link
+                              to={`/students/${student.studentId}`}
+                              className="hover:text-brand-700 hover:underline"
+                            >
                               {student.studentId}
                             </Link>
                           </td>
                           <td className="px-5 py-3">
-                            <Link to={`/students/${student.studentId}`} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">
+                            <Link
+                              to={`/students/${student.studentId}`}
+                              className="font-medium text-slate-900 hover:text-brand-700 hover:underline"
+                            >
                               {student.fullName}
                             </Link>
                           </td>
-                          <td className="px-5 py-3 text-slate-600">{classLabel(student.classCode)}</td>
+                          <td className="px-5 py-3 text-slate-600">
+                            {classLabel(student.classCode)}
+                          </td>
                           <td className="px-5 py-3 text-slate-600">{student.rollNo ?? '—'}</td>
-                          <td className="whitespace-nowrap px-5 py-3 text-slate-600">{formatDate(student.dob)}</td>
+                          <td className="whitespace-nowrap px-5 py-3 text-slate-600">
+                            {formatDate(student.dob)}
+                          </td>
                           <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-slate-600">
                             {student.aadhaar ? formatAadhaar(student.aadhaar) : '—'}
                           </td>
@@ -266,7 +331,9 @@ export function StudentsListPage() {
                               {student.transportOpted ? 'Yes' : 'No'}
                             </Badge>
                           </td>
-                          <td className="px-5 py-3"><StatusBadge status={student.status} /></td>
+                          <td className="px-5 py-3">
+                            <StatusText status={student.status} />
+                          </td>
                           {isAdmin && (
                             <td className="px-5 py-3 text-right">
                               <Link to={`/students/${student.studentId}/edit`}>
@@ -286,10 +353,16 @@ export function StudentsListPage() {
 
               <div className="flex items-center justify-between border-t border-slate-200 px-5 py-3 text-sm text-slate-600">
                 <span>
-                  {(data.page - 1) * data.limit + 1}–{Math.min(data.page * data.limit, data.total)} of {data.total}
+                  {(data.page - 1) * data.limit + 1}–{Math.min(data.page * data.limit, data.total)}{' '}
+                  of {data.total}
                 </span>
                 <div className="flex gap-2">
-                  <Button variant="secondary" size="sm" disabled={data.page <= 1} onClick={() => setPage((p) => p - 1)}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={data.page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
                     Previous
                   </Button>
                   <Button
@@ -344,7 +417,10 @@ function SortableHeader({
         className="flex items-center gap-1 uppercase tracking-wide hover:text-slate-800"
       >
         {label}
-        <Icon className={active ? 'h-3.5 w-3.5 text-brand-600' : 'h-3.5 w-3.5 text-slate-400'} aria-hidden />
+        <Icon
+          className={active ? 'h-3.5 w-3.5 text-brand-600' : 'h-3.5 w-3.5 text-slate-400'}
+          aria-hidden
+        />
       </button>
     </th>
   );

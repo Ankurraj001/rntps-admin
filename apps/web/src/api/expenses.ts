@@ -8,8 +8,11 @@ export interface ExpenseEmailResult {
   sent: boolean;
   error?: string;
   month: string;
+  /** Expense rows only, so it still explains `totalRupees`. */
   rowCount: number;
   totalRupees: number;
+  gainCount: number;
+  gainRupees: number;
 }
 
 export const expensesApi = {

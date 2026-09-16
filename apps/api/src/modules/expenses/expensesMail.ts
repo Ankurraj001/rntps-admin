@@ -13,6 +13,8 @@ export interface MonthlyExpenseMailResult {
   month: string;
   rowCount: number;
   totalRupees: number;
+  gainCount: number;
+  gainRupees: number;
 }
 
 /**
@@ -35,17 +37,31 @@ export async function sendMonthlyExpenseReport(
 
   if (to.length === 0) {
     logger.info('DAILY_REPORT_TO is not set — monthly expense report is off');
-    return { attempted: false, sent: false, month, rowCount: 0, totalRupees: 0 };
+    return {
+      attempted: false,
+      sent: false,
+      month,
+      rowCount: 0,
+      totalRupees: 0,
+      gainCount: 0,
+      gainRupees: 0,
+    };
   }
 
   // The same function the Expenses tab reads, so the email and the screen cannot disagree.
   const report = await getMonth(month);
+  // `items` carries both directions, so it is split here rather than passed through: handed
+  // over whole, a donation would be listed as a row under "Total spent".
+  const expenses = report.items.filter((item) => item.direction === 'EXPENSE');
+  const gains = report.items.filter((item) => item.direction === 'INCOME');
   const result = await sendMail({
     to,
     ...monthlyExpensesEmail({
       month,
-      items: report.items,
+      items: expenses,
+      gains,
       totalRupees: report.totalRupees,
+      gainRupees: report.gainRupees,
       collectedRupees: report.collectedRupees,
     }),
     // Keyed to the month, so a scheduler firing twice on the same date does not mail twice.
@@ -59,8 +75,10 @@ export async function sendMonthlyExpenseReport(
     sent: result.sent,
     ...(result.error ? { error: result.error } : {}),
     month,
-    rowCount: report.items.length,
+    rowCount: expenses.length,
     totalRupees: report.totalRupees,
+    gainCount: gains.length,
+    gainRupees: report.gainRupees,
   };
 
   if (result.sent) logger.info(outcome, 'monthly expense report sent');

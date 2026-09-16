@@ -28,6 +28,14 @@ async function addExpense(name: string, amountRupees: number, period = MONTH) {
   return res.body as { id: string; dateKey: string; name: string; amountRupees: number };
 }
 
+async function addGain(name: string, amountRupees: number, period = MONTH) {
+  const res = await as
+    .post('/api/v1/expenses')
+    .send({ dateKey: `${period}-05`, name, direction: 'INCOME', amountRupees })
+    .expect(201);
+  return res.body as { id: string; direction: string; amountRupees: number };
+}
+
 /** Bills one student for MONTH, so there is something collected to compare against. */
 async function billAndInvoice(fullName: string) {
   await as.put('/api/v1/fees/structures/5/2026-27').send({ heads: HEADS }).expect(200);
@@ -128,9 +136,10 @@ describe('GET /expenses', () => {
     await as.get('/api/v1/expenses?month=August').expect(400);
   });
 
-  it('still shows a row written before expenses carried a date', async () => {
+  it('still shows a row written before expenses carried a date or a direction', async () => {
     // Inserted through the driver rather than the model, because the schema now requires
-    // dateKey — this is what a row created before that field existed actually looks like.
+    // dateKey and defaults direction — this is what a row created before those fields
+    // existed actually looks like.
     await mongoose.connection.collection('expenses').insertOne({
       period: MONTH,
       name: 'Legacy petrol',
@@ -147,7 +156,92 @@ describe('GET /expenses', () => {
     // plausible-looking guess.
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0]).toMatchObject({ dateKey: `${MONTH}-01`, amountRupees: 800 });
+    // A missing direction reads as spending, which is all there was when the row was
+    // written. Read as income it would move the net by twice its value, in the wrong
+    // direction.
+    expect(res.body.items[0].direction).toBe('EXPENSE');
     expect(res.body.totalRupees).toBe(800);
+    expect(res.body.gainRupees).toBe(0);
+  });
+});
+
+describe('recorded income', () => {
+  it('defaults to an expense when the direction is not sent', async () => {
+    const created = await addExpense('Petrol', 800);
+    expect(created.direction).toBe('EXPENSE');
+  });
+
+  it('keeps income out of the expense total and counts it as money in', async () => {
+    const student = await billAndInvoice('Aarav Sharma');
+    await as
+      .post(`/api/v1/fees/invoices/${student.studentId}:${MONTH}/payments`)
+      .send({ amountRupees: 500, mode: 'CASH', paidAt: `${MONTH}-05` })
+      .expect(201);
+    await addExpense('Petrol', 800);
+    await addGain('SSA grant', 20_000);
+
+    const res = await as.get(`/api/v1/expenses?month=${MONTH}`).expect(200);
+
+    expect(res.body.totalRupees).toBe(800);
+    expect(res.body.gainRupees).toBe(20_000);
+    expect(res.body.items).toHaveLength(2);
+  });
+
+  it('keeps "collected" meaning fees, with the grant in moneyInRupees instead', async () => {
+    const student = await billAndInvoice('Aarav Sharma');
+    await as
+      .post(`/api/v1/fees/invoices/${student.studentId}:${MONTH}/payments`)
+      .send({ amountRupees: 500, mode: 'CASH', paidAt: `${MONTH}-05` })
+      .expect(201);
+    await addGain('SSA grant', 20_000);
+
+    const res = await as.get(`/api/v1/expenses?month=${MONTH}`).expect(200);
+
+    // The invariant that makes the breakdown real rather than a label: collected is still
+    // exactly what the collection report would reconcile against the receipt book, and the
+    // whole of the difference is the recorded income.
+    expect(res.body.collectedRupees).toBe(500);
+    expect(res.body.moneyInRupees).toBe(20_500);
+    expect(res.body.moneyInRupees - res.body.collectedRupees).toBe(res.body.gainRupees);
+  });
+
+  it('does not let a grant reduce what a family still owes', async () => {
+    await billAndInvoice('Aarav Sharma');
+    await addGain('SSA grant', 20_000);
+
+    const res = await as.get(`/api/v1/expenses?month=${MONTH}`).expect(200);
+    expect(res.body.outstanding).toMatchObject({ balanceRupees: 1_200, students: 1 });
+  });
+
+  it('allows an income above the expense ceiling, but not an expense', async () => {
+    await as
+      .post('/api/v1/expenses')
+      .send({ dateKey: `${MONTH}-05`, name: 'Government fund', direction: 'INCOME', amountRupees: 2_000_000 })
+      .expect(201);
+
+    await as
+      .post('/api/v1/expenses')
+      .send({ dateKey: `${MONTH}-05`, name: 'Suspicious salary', amountRupees: 2_000_000 })
+      .expect(400);
+  });
+
+  it('records the direction in the delete audit trail', async () => {
+    const grant = await addGain('SSA grant', 20_000);
+    await as.del(`/api/v1/expenses/${grant.id}`).expect(200);
+
+    const log = await AuditLog.findOne({ action: 'expense.delete' }).lean();
+    // A hard delete leaves only this line. Without the direction, a ₹20,000 row here is
+    // indistinguishable between a salary and a grant.
+    expect(log?.before).toMatchObject({ direction: 'INCOME', amountRupees: 20_000 });
+  });
+
+  it('is admin-only, like the rest of the ledger', async () => {
+    const teacherHeader = (await teacherAuth()).header;
+    await request(app)
+      .post('/api/v1/expenses')
+      .set('Authorization', teacherHeader)
+      .send({ dateKey: `${MONTH}-05`, name: 'Donation', direction: 'INCOME', amountRupees: 500 })
+      .expect(403);
   });
 });
 
@@ -188,6 +282,33 @@ describe('all-time totals', () => {
 
     const september = await as.get('/api/v1/expenses?month=2026-09').expect(200);
     expect(september.body.allTime).toMatchObject({ expenseRupees: 1_700 });
+  });
+
+  it('stays null when only income has been recorded, since there is nothing to offset', async () => {
+    const student = await billAndInvoice('Aarav Sharma');
+    await as
+      .post(`/api/v1/fees/invoices/${student.studentId}:${MONTH}/payments`)
+      .send({ amountRupees: 500, mode: 'CASH', paidAt: `${MONTH}-05` })
+      .expect(201);
+    await addGain('SSA grant', 20_000);
+
+    // A grant makes the unoffset side larger, not smaller. Opening the gate on it would
+    // report a profit consisting of the school's entire fee income plus the grant.
+    const res = await as.get(`/api/v1/expenses?month=${MONTH}`).expect(200);
+    expect(res.body.allTime).toBeNull();
+  });
+
+  it('adds recorded income to money in, on both sides of the month being viewed', async () => {
+    await addExpense('August petrol', 800, '2026-08');
+    await addGain('September grant', 5_000, '2026-09');
+
+    const res = await as.get('/api/v1/expenses?month=2026-08').expect(200);
+    expect(res.body.allTime).toMatchObject({
+      collectedRupees: 0,
+      gainRupees: 5_000,
+      moneyInRupees: 5_000,
+      expenseRupees: 800,
+    });
   });
 
   it('leaves a reversed payment out, as every other collected figure does', async () => {

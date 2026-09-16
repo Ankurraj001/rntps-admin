@@ -1,3 +1,4 @@
+import { toDateKey } from '@rntps/shared';
 import type { Express } from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -108,11 +109,16 @@ describe('GET /reports/dues', () => {
 
   it('buckets by age from the oldest due date', async () => {
     await billAndInvoice('5', 'Aarav Sharma');
+    // Frozen, not left to the wall clock: the bucket is measured from today, so an assertion
+    // on "0-30" passes only while the real date happens to be within a month of the due date
+    // and starts failing on its own a few weeks later.
+    freezeToWorkingDay();
     const res = await as.get('/api/v1/reports/dues').expect(200);
 
-    // Due 2026-08-10; "today" in this environment is 2026-08-25, so 15 days overdue.
+    // Due 2026-08-10, frozen at 2026-08-24, so 14 days overdue.
     expect(res.body.rows[0].bucket).toBe('0-30');
     expect(res.body.totals.aging['0-30']).toBe(1_200);
+    vi.useRealTimers();
   });
 
   it('buckets an old invoice as 60+', async () => {
@@ -389,5 +395,45 @@ describe('GET /reports/dashboard', () => {
   it('is readable by a teacher, since it drives their own dashboard', async () => {
     const { header } = await teacherAuth();
     await request(app).get('/api/v1/reports/dashboard').set('Authorization', header).expect(200);
+  });
+
+  it("carries what the school spent and took in, for an admin", async () => {
+    await request(app)
+      .post('/api/v1/expenses')
+      .set('Authorization', adminHeader)
+      .send({ dateKey: toDateKey(), name: 'Petrol', amountRupees: 800 })
+      .expect(201);
+    await request(app)
+      .post('/api/v1/expenses')
+      .set('Authorization', adminHeader)
+      .send({ dateKey: toDateKey(), name: 'SSA grant', direction: 'INCOME', amountRupees: 5_000 })
+      .expect(201);
+
+    const res = await as.get('/api/v1/reports/dashboard').expect(200);
+    expect(res.body.finance).toMatchObject({
+      expenseRupees: 800,
+      gainRupees: 5_000,
+      moneyInRupees: 5_000,
+      netRupees: 4_200,
+    });
+  });
+
+  it('withholds them from a teacher, rather than leaving the UI to hide them', async () => {
+    await request(app)
+      .post('/api/v1/expenses')
+      .set('Authorization', adminHeader)
+      .send({ dateKey: toDateKey(), name: 'Teacher salary', amountRupees: 15_000 })
+      .expect(201);
+
+    const { header } = await teacherAuth();
+    const res = await request(app)
+      .get('/api/v1/reports/dashboard')
+      .set('Authorization', header)
+      .expect(200);
+
+    // Every /expenses route is admin-only; a teacher reading the payroll off the one report
+    // they are allowed to read would go straight round that.
+    expect(res.body.finance).toBeNull();
+    expect(JSON.stringify(res.body)).not.toContain('15000');
   });
 });

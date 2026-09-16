@@ -4,11 +4,13 @@ import {
   AlertTriangle,
   CalendarCheck,
   CalendarDays,
+  Gift,
   IndianRupee,
   MessageSquare,
   Plus,
   TrendingUp,
   Users,
+  Wallet,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -54,7 +56,9 @@ export function DashboardPage() {
         title={`Good day, ${me.name.split(' ')[0]}`}
         description={
           // From the dashboard payload rather than GET /settings, which is admin-only.
-          dashboard.data ? `${dashboard.data.school.name} · ${dashboard.data.school.academicYear}` : undefined
+          dashboard.data
+            ? `${dashboard.data.school.name} · ${dashboard.data.school.academicYear}`
+            : undefined
         }
         action={
           isAdmin ? (
@@ -78,7 +82,10 @@ export function DashboardPage() {
       <div className="space-y-5 p-4 sm:p-6">
         {dashboard.isPending && <LoadingBlock />}
         {dashboard.error && (
-          <ErrorBlock message={(dashboard.error as Error).message} onRetry={() => void dashboard.refetch()} />
+          <ErrorBlock
+            message={(dashboard.error as Error).message}
+            onRetry={() => void dashboard.refetch()}
+          />
         )}
 
         {dashboard.data && (
@@ -133,7 +140,9 @@ export function DashboardPage() {
                   }
                   action={
                     <div className="flex items-center gap-2">
-                      <Link to="/attendance"><Button size="sm">Mark now</Button></Link>
+                      <Link to="/attendance">
+                        <Button size="sm">Mark now</Button>
+                      </Link>
                       {/*
                         Admin-only: this closes every class at once, which is not a call a
                         teacher makes on behalf of the school. The API enforces the same.
@@ -158,7 +167,13 @@ export function DashboardPage() {
                       outstanding for over 60 days.
                     </>
                   }
-                  action={<Link to="/notifications"><Button size="sm" variant="secondary">Send reminders</Button></Link>}
+                  action={
+                    <Link to="/notifications">
+                      <Button size="sm" variant="secondary">
+                        Send reminders
+                      </Button>
+                    </Link>
+                  }
                 />
               )}
 
@@ -169,11 +184,17 @@ export function DashboardPage() {
                   message={
                     <>
                       <strong>{dashboard.data.studentsWithoutWhatsapp}</strong> student
-                      {dashboard.data.studentsWithoutWhatsapp === 1 ? '' : 's'} have no reachable WhatsApp
-                      number, so fee reminders cannot go out for them.
+                      {dashboard.data.studentsWithoutWhatsapp === 1 ? '' : 's'} have no reachable
+                      WhatsApp number, so fee reminders cannot go out for them.
                     </>
                   }
-                  action={<Link to="/students"><Button size="sm" variant="secondary">Review</Button></Link>}
+                  action={
+                    <Link to="/students">
+                      <Button size="sm" variant="secondary">
+                        Review
+                      </Button>
+                    </Link>
+                  }
                 />
               )}
             </div>
@@ -218,6 +239,24 @@ export function DashboardPage() {
                     value={formatINR(dashboard.data.outstanding.balanceRupees)}
                     hint={`${dashboard.data.outstanding.students} students`}
                   />
+                  {/* Rendered off `finance`, which the API sends only to an admin — the
+                      `isAdmin` check around this block is convenience, not the control. */}
+                  {dashboard.data.finance && (
+                    <>
+                      <Stat
+                        icon={<Gift className="h-5 w-5 text-emerald-600" aria-hidden />}
+                        label="Other income"
+                        value={formatINR(dashboard.data.finance.gainRupees)}
+                        hint={`${formatINR(dashboard.data.finance.moneyInRupees)} in altogether`}
+                      />
+                      <Stat
+                        icon={<Wallet className="h-5 w-5 text-slate-600" aria-hidden />}
+                        label={dashboard.data.finance.netRupees >= 0 ? 'Profit' : 'Loss'}
+                        value={formatINR(Math.abs(dashboard.data.finance.netRupees))}
+                        hint={`${formatINR(dashboard.data.finance.expenseRupees)} spent this month`}
+                      />
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -229,7 +268,9 @@ export function DashboardPage() {
                   description="Measured from the oldest unpaid invoice's due date."
                   action={
                     <Link to="/reports">
-                      <Button variant="secondary" size="sm">Full report</Button>
+                      <Button variant="secondary" size="sm">
+                        Full report
+                      </Button>
                     </Link>
                   }
                 />
@@ -266,7 +307,8 @@ export function DashboardPage() {
                   <ul className="space-y-2">
                     {CLASS_CODES.map((code) => {
                       const count =
-                        dashboard.data.studentsByClass.find((row) => row.classCode === code)?.count ?? 0;
+                        dashboard.data.studentsByClass.find((row) => row.classCode === code)
+                          ?.count ?? 0;
                       const share = (count / dashboard.data.activeStudents) * 100;
                       return (
                         <li key={code} className="flex items-center gap-3 text-sm">
@@ -277,9 +319,14 @@ export function DashboardPage() {
                             {classLabel(code)}
                           </Link>
                           <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                            <div className="h-full rounded-full bg-brand-500" style={{ width: `${share}%` }} />
+                            <div
+                              className="h-full rounded-full bg-brand-500"
+                              style={{ width: `${share}%` }}
+                            />
                           </div>
-                          <span className="w-8 text-right tabular-nums text-slate-900">{count}</span>
+                          <span className="w-8 text-right tabular-nums text-slate-900">
+                            {count}
+                          </span>
                         </li>
                       );
                     })}

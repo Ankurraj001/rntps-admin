@@ -3,6 +3,7 @@ import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { sendMail } from '../../lib/mailer.js';
 import { dailyCollectionEmail } from '../../lib/mailTemplates.js';
+import { dayRows, dayTotals } from '../expenses/expenseLedger.js';
 import { getCollectionReport } from './reports.service.js';
 
 export interface DailyCollectionMailResult {
@@ -11,8 +12,12 @@ export interface DailyCollectionMailResult {
   sent: boolean;
   error?: string;
   dateKey: string;
+  /** Fee receipts only, so it still explains `totalRupees`. */
   rowCount: number;
+  /** Fee money, reversals excluded — the same figure the collection report shows. */
   totalRupees: number;
+  gainCount: number;
+  gainRupees: number;
 }
 
 /**
@@ -45,13 +50,33 @@ export async function sendDailyCollectionReport(
   // without credentials. Short-circuiting here would make that unreachable.
   if (to.length === 0) {
     logger.info('DAILY_REPORT_TO is not set — daily collection report is off');
-    return { attempted: false, sent: false, dateKey, rowCount: 0, totalRupees: 0 };
+    return {
+      attempted: false,
+      sent: false,
+      dateKey,
+      rowCount: 0,
+      totalRupees: 0,
+      gainCount: 0,
+      gainRupees: 0,
+    };
   }
 
-  const report = await getCollectionReport(dateKey, dateKey);
+  // Income read through the ledger rather than summed here, so the day's figure means the
+  // same thing it does on the Expenses tab and in the month-end email.
+  const [report, gains, recorded] = await Promise.all([
+    getCollectionReport(dateKey, dateKey),
+    dayRows(dateKey, 'INCOME'),
+    dayTotals(dateKey),
+  ]);
   const result = await sendMail({
     to,
-    ...dailyCollectionEmail({ dateKey, rows: report.rows, totals: report.totals }),
+    ...dailyCollectionEmail({
+      dateKey,
+      rows: report.rows,
+      totals: report.totals,
+      gains,
+      gainRupees: recorded.gainRupees,
+    }),
     // Keyed to the day rather than the run, so a scheduler that fires twice for the same
     // date does not mail twice. Honoured by Resend only — the SMTP path ignores it, so on
     // Brevo this is insurance that pays out only if the transport ever changes.
@@ -65,6 +90,8 @@ export async function sendDailyCollectionReport(
     dateKey,
     rowCount: report.rows.length,
     totalRupees: report.totals.amountRupees,
+    gainCount: gains.length,
+    gainRupees: recorded.gainRupees,
   };
 
   if (result.sent) logger.info(outcome, 'daily collection report sent');

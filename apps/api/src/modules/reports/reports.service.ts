@@ -4,6 +4,7 @@ import {
   attendancePercentage,
   countsAsPresent,
   countsAsWorkingDay,
+  netRupees,
   toDateKey,
   type ClassCode,
 } from '@rntps/shared';
@@ -13,6 +14,10 @@ import { Attendance, type AttendanceDoc } from '../../models/Attendance.js';
 import { Invoice, type InvoiceDoc } from '../../models/Invoice.js';
 import { Student } from '../../models/Student.js';
 import { getUnmarkedClasses, holidayFor } from '../attendance/attendance.service.js';
+// The ledger, not the expenses service: that service imports this file, so reaching back to
+// it would close a cycle. The ledger imports only its model, which is what makes it safe to
+// read from both sides.
+import { monthTotals } from '../expenses/expenseLedger.js';
 
 export interface DuesRow {
   studentId: string;
@@ -47,7 +52,9 @@ export interface DuesReport {
  * straight to an `$in`.
  */
 async function transportStudentIds(): Promise<string[]> {
-  const students = await Student.find({ transportOpted: true }).select('_id').lean<{ _id: string }[]>();
+  const students = await Student.find({ transportOpted: true })
+    .select('_id')
+    .lean<{ _id: string }[]>();
   return students.map((student) => student._id);
 }
 
@@ -105,7 +112,9 @@ export async function getDuesReport(filters: {
   }
 
   // Worst first: oldest debt, then largest.
-  rows.sort((a, b) => a.oldestDueDate.localeCompare(b.oldestDueDate) || b.balanceRupees - a.balanceRupees);
+  rows.sort(
+    (a, b) => a.oldestDueDate.localeCompare(b.oldestDueDate) || b.balanceRupees - a.balanceRupees,
+  );
 
   return {
     generatedAt: new Date().toISOString(),
@@ -196,7 +205,13 @@ export async function getCollectionReport(
         reversedAt: {
           $cond: [
             { $ifNull: ['$payments.reversedAt', false] },
-            { $dateToString: { date: '$payments.reversedAt', format: '%Y-%m-%d', timezone: IST_TIME_ZONE } },
+            {
+              $dateToString: {
+                date: '$payments.reversedAt',
+                format: '%Y-%m-%d',
+                timezone: IST_TIME_ZONE,
+              },
+            },
             null,
           ],
         },
@@ -227,7 +242,13 @@ export async function getCollectionReport(
     to,
     rows,
     // `count` counts receipts kept, so it always explains `amountRupees`.
-    totals: { count: rows.length - reversedCount, amountRupees, byMode, reversedCount, reversedRupees },
+    totals: {
+      count: rows.length - reversedCount,
+      amountRupees,
+      byMode,
+      reversedCount,
+      reversedRupees,
+    },
   };
 }
 
@@ -249,6 +270,22 @@ export interface DashboardSummary {
     holiday: { dateKey: string; label: string } | null;
   };
   month: { period: string; collectedRupees: number; invoicedRupees: number };
+  /**
+   * What the school spent and took in outside fees this month — **admin only**, `null` for a
+   * teacher.
+   *
+   * Gated in the payload rather than in the UI because this is the one report a teacher may
+   * read, and `/expenses` is admin-only for a reason ("what the school spends is not a
+   * teacher's business"). Hiding these figures with a frontend check would leave them one
+   * devtools tab away.
+   */
+  finance: {
+    gainRupees: number;
+    expenseRupees: number;
+    /** Fee receipts plus recorded income, so no consumer has to add the two itself. */
+    moneyInRupees: number;
+    netRupees: number;
+  } | null;
   outstanding: {
     balanceRupees: number;
     students: number;
@@ -273,34 +310,48 @@ export async function invoicedInPeriod(period: string): Promise<number> {
   return rows[0]?.total ?? 0;
 }
 
-export async function getDashboard(): Promise<DashboardSummary> {
+export async function getDashboard(
+  options: { includeFinance?: boolean } = {},
+): Promise<DashboardSummary> {
   const today = toDateKey();
   const period = today.slice(0, 7);
   const { from, to } = monthBounds(period);
 
-  const [settings, byClassRaw, storedToday, unmarkedClasses, dues, collection, invoicedThisMonth, noWhatsapp] =
-    await Promise.all([
-      getSettings(),
-      Student.aggregate<{ _id: string; count: number }>([
-        { $match: { status: 'ACTIVE' } },
-        { $group: { _id: '$classCode', count: { $sum: 1 } } },
-      ]),
-      Attendance.find({ dateKey: today }).lean<AttendanceDoc[]>(),
-      // Asked of the attendance module rather than re-derived here. Inlining the same
-      // filter is what let this banner nag every Sunday while GET /attendance/unmarked,
-      // which knew about the school calendar, quietly returned nothing.
-      getUnmarkedClasses(today),
-      getDuesReport({}),
-      getCollectionReport(from, to),
-      invoicedInPeriod(period),
-      Student.countDocuments({
-        status: 'ACTIVE',
-        $or: [
-          { guardians: { $size: 0 } },
-          { guardians: { $not: { $elemMatch: { isPrimary: true, whatsappOptOut: false } } } },
-        ],
-      }),
-    ]);
+  const [
+    settings,
+    byClassRaw,
+    storedToday,
+    unmarkedClasses,
+    dues,
+    collection,
+    invoicedThisMonth,
+    recorded,
+    noWhatsapp,
+  ] = await Promise.all([
+    getSettings(),
+    Student.aggregate<{ _id: string; count: number }>([
+      { $match: { status: 'ACTIVE' } },
+      { $group: { _id: '$classCode', count: { $sum: 1 } } },
+    ]),
+    Attendance.find({ dateKey: today }).lean<AttendanceDoc[]>(),
+    // Asked of the attendance module rather than re-derived here. Inlining the same
+    // filter is what let this banner nag every Sunday while GET /attendance/unmarked,
+    // which knew about the school calendar, quietly returned nothing.
+    getUnmarkedClasses(today),
+    getDuesReport({}),
+    getCollectionReport(from, to),
+    invoicedInPeriod(period),
+    // Not queried at all for a teacher: the cheapest way to be sure a figure cannot leak is
+    // never to fetch it.
+    options.includeFinance ? monthTotals(period) : null,
+    Student.countDocuments({
+      status: 'ACTIVE',
+      $or: [
+        { guardians: { $size: 0 } },
+        { guardians: { $not: { $elemMatch: { isPrimary: true, whatsappOptOut: false } } } },
+      ],
+    }),
+  ]);
 
   // A holiday ignores whatever is stored, exactly as the register and the monthly sheet
   // do — otherwise a mark left behind by a day later declared a holiday would still show
@@ -327,6 +378,18 @@ export async function getDashboard(): Promise<DashboardSummary> {
       collectedRupees: collection.totals.amountRupees,
       invoicedRupees: invoicedThisMonth,
     },
+    finance: recorded
+      ? {
+          gainRupees: recorded.gainRupees,
+          expenseRupees: recorded.expenseRupees,
+          moneyInRupees: collection.totals.amountRupees + recorded.gainRupees,
+          netRupees: netRupees({
+            collectedRupees: collection.totals.amountRupees,
+            gainRupees: recorded.gainRupees,
+            expenseRupees: recorded.expenseRupees,
+          }),
+        }
+      : null,
     outstanding: {
       balanceRupees: dues.totals.balanceRupees,
       students: dues.totals.students,

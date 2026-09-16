@@ -66,6 +66,16 @@ export interface DashboardSummary {
     holiday: { dateKey: string; label: string } | null;
   };
   month: { period: string; collectedRupees: number; invoicedRupees: number };
+  /**
+   * What the school spent and took in outside fees this month. **Null for a teacher** — the
+   * API withholds it rather than relying on this app to hide it.
+   */
+  finance: {
+    gainRupees: number;
+    expenseRupees: number;
+    moneyInRupees: number;
+    netRupees: number;
+  } | null;
   outstanding: {
     balanceRupees: number;
     students: number;

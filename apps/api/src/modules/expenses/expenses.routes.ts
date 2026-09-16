@@ -43,7 +43,13 @@ expenseRoutes.post(
       action: 'expense-report.email',
       entity: 'expense',
       entityId: month,
-      after: { sent: result.sent, rowCount: result.rowCount, totalRupees: result.totalRupees },
+      after: {
+        sent: result.sent,
+        rowCount: result.rowCount,
+        totalRupees: result.totalRupees,
+        gainCount: result.gainCount,
+        gainRupees: result.gainRupees,
+      },
     });
 
     res.json(result);
@@ -61,7 +67,12 @@ expenseRoutes.post(
       action: 'expense.create',
       entity: 'expense',
       entityId: expense.id,
-      after: { dateKey: expense.dateKey, name: expense.name, amountRupees: expense.amountRupees },
+      after: {
+        dateKey: expense.dateKey,
+        name: expense.name,
+        direction: expense.direction,
+        amountRupees: expense.amountRupees,
+      },
     });
 
     res.status(201).json(expense);
@@ -75,12 +86,19 @@ expenseRoutes.delete(
     if (!removed) throw new AppError(404, 'Expense not found', 'EXPENSE_NOT_FOUND');
 
     // `before` carries the whole record, not just its id: this is a hard delete, so once
-    // the document is gone this log line is the only remaining trace that it existed.
+    // the document is gone this log line is the only remaining trace that it existed. That
+    // includes `direction` — without it a deleted ₹50,000 row is indistinguishable between a
+    // salary and a donation, and the two move the net in opposite directions.
     await recordAudit(req, {
       action: 'expense.delete',
       entity: 'expense',
       entityId: removed.id,
-      before: { dateKey: removed.dateKey, name: removed.name, amountRupees: removed.amountRupees },
+      before: {
+        dateKey: removed.dateKey,
+        name: removed.name,
+        direction: removed.direction,
+        amountRupees: removed.amountRupees,
+      },
     });
 
     res.json({ deleted: true });

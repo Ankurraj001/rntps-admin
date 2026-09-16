@@ -12,21 +12,18 @@ import { Expense, type ExpenseDoc } from '../../models/Expense.js';
 // excluded, a missing isReversed on an old document read as false. Re-deriving those totals
 // from Invoice directly would duplicate that logic and let this tab drift away from the
 // dashboard and the collection report, which is exactly what nobody would notice.
-import { getCollectionReport, getDuesReport, invoicedInPeriod } from '../reports/reports.service.js';
-
-function toDto(doc: ExpenseDoc): ExpenseDto {
-  return {
-    id: String(doc._id),
-    // Rows written before expenses carried a day have only a month. Falling back to the
-    // first of it keeps them in the list and in the totals, which matters more than showing
-    // a day nobody recorded — and it is visibly the 1st rather than a plausible-looking
-    // guess. Delete the fallback once no such rows remain.
-    dateKey: doc.dateKey ?? `${doc.period}-01`,
-    period: doc.period,
-    name: doc.name,
-    amountRupees: doc.amountRupees,
-  };
-}
+import {
+  getCollectionReport,
+  getDuesReport,
+  invoicedInPeriod,
+} from '../reports/reports.service.js';
+import {
+  allTimeTotals,
+  anyExpenseRecorded,
+  monthRows,
+  splitByDirection,
+  toDto,
+} from './expenseLedger.js';
 
 /**
  * Floor for an all-time collection query. Payments carry a `paidAt` dateKey, which sorts as
@@ -35,37 +32,38 @@ function toDto(doc: ExpenseDoc): ExpenseDto {
 const BEGINNING_OF_TIME = '1900-01-01';
 
 /**
- * Everything collected against everything recorded as spent, over the whole history.
+ * Everything received against everything recorded as spent, over the whole history.
  *
  * **These two sides do not start from the same date, and the number flatters the school
- * because of it.** Fee collection reaches back to the first invoice ever raised; expenses
- * only exist from the day someone began entering them. Every month billed before then adds
- * collection with no spending to offset it, so the profit shown includes salaries and bills
- * that were really paid but never written down. Reported this way deliberately — it is the
- * plain all-time figure that was asked for — but it is not a P&L.
+ * because of it.** Fee collection reaches back to the first invoice ever raised; expenses and
+ * recorded income only exist from the day someone began entering them. Every month billed
+ * before then adds collection with no spending to offset it, so the profit shown includes
+ * salaries and bills that were really paid but never written down. Reported this way
+ * deliberately — it is the plain all-time figure that was asked for — but it is not a P&L.
  *
- * Null until an expense exists, so a school that has not started recording is not shown a
- * profit consisting of its entire fee income.
+ * Null until an *expense* exists, so a school that has not started recording is not shown a
+ * profit consisting of its entire fee income. A donation on its own does not open the gate:
+ * it would make the number worse, not better, by adding to the unoffset side.
  */
 async function getAllTime(): Promise<ExpenseMonthDto['allTime']> {
-  const anyExpense = await Expense.exists({});
-  if (!anyExpense) return null;
+  if (!(await anyExpenseRecorded())) return null;
 
-  const [collection, spent] = await Promise.all([
+  const [collection, recorded] = await Promise.all([
     // Reuses getCollectionReport rather than summing payments here, so "collected" has one
     // definition across the dashboard, the collection report and this tab — reversed
     // payments excluded, a missing isReversed on an old document read as false. It builds a
     // rows array this caller discards; at a few thousand receipts that costs less than a
     // second copy of the reversal rule free to drift from the first.
     getCollectionReport(BEGINNING_OF_TIME, toDateKey()),
-    Expense.aggregate<{ total: number }>([
-      { $group: { _id: null, total: { $sum: '$amountRupees' } } },
-    ]),
+    allTimeTotals(),
   ]);
 
+  const collectedRupees = collection.totals.amountRupees;
   return {
-    collectedRupees: collection.totals.amountRupees,
-    expenseRupees: spent[0]?.total ?? 0,
+    collectedRupees,
+    gainRupees: recorded.gainRupees,
+    moneyInRupees: collectedRupees + recorded.gainRupees,
+    expenseRupees: recorded.expenseRupees,
   };
 }
 
@@ -74,18 +72,25 @@ export async function getMonth(month: string): Promise<ExpenseMonthDto> {
   const { from, to } = monthBounds(month);
 
   const [items, collection, invoicedRupees, dues, allTime] = await Promise.all([
-    Expense.find({ period: month }).sort({ dateKey: -1, createdAt: -1 }).lean<ExpenseDoc[]>(),
+    monthRows(month),
     getCollectionReport(from, to),
     invoicedInPeriod(month),
     getDuesReport({}),
     getAllTime(),
   ]);
 
+  // Folded from the rows the tab is about to render rather than queried separately, so the
+  // cards cannot state a total the list below them does not add up to.
+  const { expenseRupees, gainRupees } = splitByDirection(items);
+  const collectedRupees = collection.totals.amountRupees;
+
   return {
     month,
-    items: items.map(toDto),
-    totalRupees: items.reduce((sum, item) => sum + item.amountRupees, 0),
-    collectedRupees: collection.totals.amountRupees,
+    items,
+    totalRupees: expenseRupees,
+    gainRupees,
+    collectedRupees,
+    moneyInRupees: collectedRupees + gainRupees,
     invoicedRupees,
     outstanding: { balanceRupees: dues.totals.balanceRupees, students: dues.totals.students },
     allTime,
@@ -96,7 +101,7 @@ export async function createExpense(
   payload: CreateExpensePayload,
   recordedBy: string,
 ): Promise<ExpenseDto> {
-  // The month is derived here, never taken from the request, so an expense cannot be filed
+  // The month is derived here, never taken from the request, so an entry cannot be filed
   // under a month its own date contradicts.
   const created = await Expense.create({
     ...payload,
@@ -107,7 +112,7 @@ export async function createExpense(
 }
 
 /**
- * Removes an expense outright.
+ * Removes an entry outright.
  *
  * One of the two hard deletes among this system's money records — the other being an invoice
  * nobody ever paid against. Payments are always reversed rather than removed, and an invoice

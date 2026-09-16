@@ -158,6 +158,10 @@ which doubles as the uniqueness constraint:
 Keying an invoice by student-and-period makes double-billing structurally impossible; keying
 attendance by student-and-day does the same for double-marking. Neither needs an application check.
 
+`expenses` is on the ObjectId side of that line deliberately: two ₹800 petrol entries in one month
+are two real refuels, and two ₹5,000 donations are two real donations, so a composite key would
+reject legitimate rows rather than prevent mistakes.
+
 **Siblings are a shared `familyId`,** not a duplicated list on each student. Linking a sibling during
 onboarding makes the new record join that family and pre-fills the guardian and address details. Fee
 reminders then group by family, so a parent with three children gets one message rather than three.
@@ -487,7 +491,7 @@ A     GET    /reports/dues?format=csv
 A     GET    /reports/collection?from&to&format=csv
 
 A     GET    /expenses?month=YYYY-MM              the whole Expenses tab in one response
-A     POST   /expenses
+A     POST   /expenses                            direction EXPENSE (default) or INCOME
 A     DELETE /expenses/:id                        the one hard delete; audited with its values
 
 A     GET    /settings                            admin-only: exposes the ID prefix and counters
@@ -664,30 +668,55 @@ class and roll number the student actually sat those papers under, and the new s
 3. **Fee reminders** → build a batch → work through the queue.
 4. **Reports → Collection** at month end; reconcile against the bank.
 
-### Monthly (expenses)
+### Monthly (expenses and other income)
 
-**Reports → Expenses** is where money going *out* is recorded — salaries, fuel, bills. Pick a month,
-type a name and an amount, press Add. Each row saves immediately, so the cards above it are never
-out of step with the list below.
+**Reports → Expenses** is where money going *out* is recorded — salaries, fuel, bills — and also the
+money coming *in* that nobody was invoiced for: a government fund, an SSA grant, a donation. Pick a
+month, choose **Expense** or **Income**, type a name and an amount, press Add. Each row saves
+immediately, so the cards above it are never out of step with the lists below.
 
-Four figures for the chosen month: collected (with what was invoiced), total expenses, profit or
-loss, and current outstanding. Under them, a running profit/loss **from the first month an expense
-was ever recorded** — scoped that way because fee collection goes back to the school's first invoice
-while expenses only start when someone starts typing them, and comparing the two over all time would
-report a profit made entirely of the months nobody was recording.
+The two directions live in one collection (`expenses`, with a `direction` of `EXPENSE` or `INCOME`)
+because every figure that matters reads them together — the month's net, the running total, the
+month-end email. They are listed as **two separate lists** with their own totals, though: the
+amounts right-align into one column so they can be added up by eye, and a column mixing inflows with
+outflows would give an answer wrong by twice the income.
 
-Two things to know:
+Four figures for the chosen month: money in (broken into fees-of-invoiced and other income), total
+expenses, profit or loss, and current outstanding. Under them, a running profit/loss **from the
+first month an expense was ever recorded** — scoped that way because fee collection goes back to the
+school's first invoice while expenses only start when someone starts typing them, and comparing the
+two over all time would report a profit made entirely of the months nobody was recording.
 
+Three things to know:
+
+- **"Collected" always means fees.** Recorded income is added alongside it as *other income*, and
+  the two together are *money in*. Keeping the fee figure separate is what lets the Collection
+  report still be reconciled receipt-for-receipt against the bank — a grant has no receipt number,
+  no student and no payment mode, so it is never listed there. The invariant is
+  `moneyInRupees − collectedRupees == gainRupees`, and it is covered by a test.
 - **Outstanding is as of today**, not as of the month on screen. It is the same all-time balance the
-  dashboard shows; there is no historical version of it.
-- **Removing an expense deletes it.** This is the one place in the system that destroys a money
-  record rather than voiding or reversing it — an expense has no receipt in a parent's hands and
-  nothing points at it. The deleted name, amount and month are written to `auditLogs`, which is the
-  only trace that survives.
+  dashboard shows; there is no historical version of it. Recorded income never touches it — a
+  donation is not owed by anyone, so it cannot reduce what a family still has to pay.
+- **Removing a row deletes it.** This is the one place in the system that destroys a money record
+  rather than voiding or reversing it — an expense has no receipt in a parent's hands and nothing
+  points at it. The deleted name, amount, month **and direction** are written to `auditLogs`, which
+  is the only trace that survives; without the direction a deleted ₹50,000 row would be
+  indistinguishable between a salary and a grant.
+
+The all-time line stays hidden until an **expense** exists, not merely an entry. A school that has
+recorded a grant and no spending has nothing to offset against, and opening the gate on income would
+report a profit consisting of its entire fee income plus the grant.
+
+Rows written before `direction` existed have no such field, and are read as spending — which is all
+there was when they were written. The amount ceilings differ by direction: ₹10,00,000 for an
+expense, which is really a typo guard against a stray zero, and ₹1,00,00,000 for income, because a
+government fund genuinely arrives as one large payment.
 
 **The month-end email.** On the last day of each month at **18:00 IST**, a scheduled function mails
-that month's expenses — the table, the total, and how it sat against the month's collection — to the
-same `DAILY_REPORT_TO` list as the daily collection email. It sends on a month with no expenses too,
+that month's expenses — the table, the total, a second table of any other income, and how the three
+sat against the month's collection — to the same `DAILY_REPORT_TO` list as the daily collection
+email. The verdict is spelled out in words ("profit ₹2,900"), since a mail client may render a minus
+sign in a colour the reader cannot see, or strip it with the styling. It sends on a month with no expenses too,
 saying so, for the same reason the daily one does: an empty inbox cannot be told apart from a dead
 job.
 
@@ -733,13 +762,17 @@ also keeps the job to a single message against the transport's daily cap.
 **It sends on a quiet day too**, saying zero. A missing email cannot be told apart from a job that
 died three weeks ago, so the email arriving at all is the evidence the schedule is alive.
 
-Two things worth knowing:
+Three things worth knowing:
 
 - It covers payments **dated** that day (`paidAt`), which is how the dashboard and Reports → Collection
   already count a day. Because `paidAt` is backdatable and the email goes at 7pm, a payment entered
   later — or backdated to an earlier day — appears in no digest at all. The email says so in a footer
   and points at Reports → Collection, which remains the record; `npm run report:daily -- 2026-09-04`
   re-sends any day.
+- Any **other income** dated that day is listed under the receipts, with its own total and a
+  **Total received** line beneath both. The fee total above it stays exactly what the receipt book
+  says, so the digest is still reconcilable against it. A day with a donation and no receipts is not
+  a quiet day, and the subject line says so.
 - Netlify evaluates cron in **UTC** (`30 13 * * *` = 19:00 IST; India has no DST). Scheduled functions
   fire only on **published production deploys**, so a Deploy Preview cannot mail the recipient. Use
   **Run now** in the Netlify UI to fire one on demand.

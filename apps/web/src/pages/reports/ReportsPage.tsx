@@ -1,4 +1,15 @@
-import { CLASS_CODES, classLabel, formatINR, lastDayOfPeriod, toDateKey, toPeriod } from '@rntps/shared';
+import {
+  CLASS_CODES,
+  classLabel,
+  formatINR,
+  lastDayOfPeriod,
+  netLabel,
+  netRupees,
+  toDateKey,
+  toPeriod,
+  type ExpenseDirection,
+  type ExpenseDto,
+} from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Mail, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -30,7 +41,10 @@ export function ReportsPage() {
 
   return (
     <>
-      <PageHeader title="Reports" description="Export any of these as CSV for the office records." />
+      <PageHeader
+        title="Reports"
+        description="Export any of these as CSV for the office records."
+      />
 
       {/* Four tabs are wider than a phone, so the strip scrolls rather than pushing the
           whole page sideways. `shrink-0` stops flex from compressing them into each other
@@ -45,7 +59,9 @@ export function ReportsPage() {
               onClick={() => setTab(name)}
               className={cn(
                 '-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium sm:px-4',
-                tab === name ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800',
+                tab === name
+                  ? 'border-brand-600 text-brand-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-800',
               )}
             >
               {name}
@@ -69,14 +85,25 @@ function DuesReport() {
   const [transportOnly, setTransportOnly] = useState(false);
   // Sent as 'true' only when on: the API coerces the query string, and any value at all
   // — including "false" — would read as on.
-  const params = { classCode: classCode || undefined, transportOnly: transportOnly ? 'true' : undefined };
-  const dues = useQuery({ queryKey: reportKeys.dues(params), queryFn: () => reportsApi.dues(params) });
+  const params = {
+    classCode: classCode || undefined,
+    transportOnly: transportOnly ? 'true' : undefined,
+  };
+  const dues = useQuery({
+    queryKey: reportKeys.dues(params),
+    queryFn: () => reportsApi.dues(params),
+  });
 
   return (
     <>
       <Card>
         <div className="flex flex-wrap items-end gap-3 p-4">
-          <Select aria-label="Class" className="w-40" value={classCode} onChange={(e) => setClassCode(e.target.value)}>
+          <Select
+            aria-label="Class"
+            className="w-40"
+            value={classCode}
+            onChange={(e) => setClassCode(e.target.value)}
+          >
             <option value="">All classes</option>
             {CLASS_CODES.map((code) => (
               <option key={code} value={code}>
@@ -85,7 +112,11 @@ function DuesReport() {
             ))}
           </Select>
           <label className="flex h-10 items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={transportOnly} onChange={(e) => setTransportOnly(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={transportOnly}
+              onChange={(e) => setTransportOnly(e.target.checked)}
+            />
             Transport
           </label>
           <Button
@@ -108,15 +139,21 @@ function DuesReport() {
             <Card>
               <CardBody>
                 <p className="text-xs uppercase tracking-wide text-slate-500">Total outstanding</p>
-                <p className="text-2xl font-semibold">{formatINR(dues.data.totals.balanceRupees)}</p>
+                <p className="text-2xl font-semibold">
+                  {formatINR(dues.data.totals.balanceRupees)}
+                </p>
                 <p className="text-xs text-slate-500">{dues.data.totals.students} students</p>
               </CardBody>
             </Card>
             {(['0-30', '31-60', '60+'] as const).map((bucket) => (
               <Card key={bucket}>
                 <CardBody>
-                  <p className="text-xs uppercase tracking-wide text-slate-500">{bucket} days overdue</p>
-                  <p className="text-2xl font-semibold">{formatINR(dues.data.totals.aging[bucket])}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">
+                    {bucket} days overdue
+                  </p>
+                  <p className="text-2xl font-semibold">
+                    {formatINR(dues.data.totals.aging[bucket])}
+                  </p>
                 </CardBody>
               </Card>
             ))}
@@ -130,26 +167,45 @@ function DuesReport() {
                 <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th scope="col" className="px-5 py-3 font-medium">Student</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Class</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Invoices</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Oldest due</th>
-                      <th scope="col" className="px-5 py-3 text-right font-medium">Balance</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Age</th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Student
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Class
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Invoices
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Oldest due
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-right font-medium">
+                        Balance
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Age
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {dues.data.rows.map((row) => (
                       <tr key={row.studentId} className="hover:bg-slate-50">
                         <td className="px-5 py-3">
-                          <Link to={`/students/${row.studentId}`} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">
+                          <Link
+                            to={`/students/${row.studentId}`}
+                            className="font-medium text-slate-900 hover:text-brand-700 hover:underline"
+                          >
                             {row.studentName}
                           </Link>
                         </td>
                         <td className="px-5 py-3 text-slate-600">{classLabel(row.classCode)}</td>
                         <td className="px-5 py-3 text-slate-600">{row.invoiceCount}</td>
-                        <td className="px-5 py-3 text-slate-600">{formatDate(row.oldestDueDate)}</td>
-                        <td className="px-5 py-3 text-right font-medium tabular-nums">{formatINR(row.balanceRupees)}</td>
+                        <td className="px-5 py-3 text-slate-600">
+                          {formatDate(row.oldestDueDate)}
+                        </td>
+                        <td className="px-5 py-3 text-right font-medium tabular-nums">
+                          {formatINR(row.balanceRupees)}
+                        </td>
                         <td className="px-5 py-3">
                           <Badge tone={BUCKET_TONE[row.bucket] ?? 'slate'}>{row.bucket}</Badge>
                         </td>
@@ -194,7 +250,11 @@ function CollectionReport() {
             <DateInput value={to} onChange={setTo} />
           </label>
           <label className="flex h-10 items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={transportOnly} onChange={(e) => setTransportOnly(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={transportOnly}
+              onChange={(e) => setTransportOnly(e.target.checked)}
+            />
             Transport
           </label>
           <Button
@@ -223,7 +283,9 @@ function CollectionReport() {
             <Card className="flex-1">
               <CardBody>
                 <p className="text-xs uppercase tracking-wide text-slate-500">Collected</p>
-                <p className="text-2xl font-semibold">{formatINR(collection.data.totals.amountRupees)}</p>
+                <p className="text-2xl font-semibold">
+                  {formatINR(collection.data.totals.amountRupees)}
+                </p>
                 <p className="text-xs text-slate-500">{collection.data.totals.count} receipts</p>
               </CardBody>
             </Card>
@@ -265,17 +327,32 @@ function CollectionReport() {
                 <table className="min-w-full text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th scope="col" className="px-5 py-3 font-medium">Receipt</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Date</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Student</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Month</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Mode</th>
-                      <th scope="col" className="px-5 py-3 text-right font-medium">Amount</th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Receipt
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Date
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Student
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Month
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Mode
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-right font-medium">
+                        Amount
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {collection.data.rows.map((row) => (
-                      <tr key={row.receiptNo} className={cn('hover:bg-slate-50', row.isReversed && 'bg-amber-50/40')}>
+                      <tr
+                        key={row.receiptNo}
+                        className={cn('hover:bg-slate-50', row.isReversed && 'bg-amber-50/40')}
+                      >
                         <td className="px-5 py-3 font-mono text-xs">{row.receiptNo}</td>
                         <td className="px-5 py-3 text-slate-600">{formatDate(row.paidAt)}</td>
                         <td className="px-5 py-3">
@@ -335,20 +412,33 @@ function ExpensesReport() {
   const [date, setDate] = useState(() => defaultExpenseDate(toDateKey().slice(0, 7)));
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [direction, setDirection] = useState<ExpenseDirection>('EXPENSE');
 
   const expenses = useQuery({
     queryKey: expenseKeys.month(month),
     queryFn: () => expensesApi.month(month),
   });
 
+  // Split here rather than asked of the API twice: `items` carries both directions, and a
+  // consumer that means "expenses" has to say so or it will count a donation as a cost.
+  const expenseItems = (expenses.data?.items ?? []).filter((i) => i.direction === 'EXPENSE');
+  const gainItems = (expenses.data?.items ?? []).filter((i) => i.direction === 'INCOME');
+
+  const isIncome = direction === 'INCOME';
   const typed = Number(amount || 0);
+  // The ceiling differs by direction: ₹10,00,000 is a typo guard on a bill, but a grant can
+  // genuinely run to lakhs. Mirrors the bound the API enforces.
+  const ceiling = isIncome ? 10_000_000 : 1_000_000;
   // Refused rather than truncated, as everywhere else money is entered.
   const amountError =
-    amount !== '' && !Number.isInteger(typed) ? 'Enter a whole number of rupees' : undefined;
+    amount !== '' && !Number.isInteger(typed)
+      ? 'Enter a whole number of rupees'
+      : typed > ceiling
+        ? `That is above the ${formatINR(ceiling)} limit for ${isIncome ? 'income' : 'an expense'}`
+        : undefined;
   // Blocked rather than quietly filed elsewhere: the month comes from the date, so a date
   // outside the month on screen would add a row that immediately disappears from it.
-  const dateError =
-    date !== '' && toPeriod(date) !== month ? `Pick a day in ${month}` : undefined;
+  const dateError = date !== '' && toPeriod(date) !== month ? `Pick a day in ${month}` : undefined;
   const ready = date !== '' && !dateError && name.trim().length >= 2 && typed > 0 && !amountError;
 
   // Every add and remove refetches, so the cards above never disagree with the rows below.
@@ -358,12 +448,21 @@ function ExpensesReport() {
 
   const add = useMutation({
     mutationFn: () =>
-      expensesApi.add({ dateKey: date, name: name.trim(), amountRupees: Math.trunc(typed) }),
+      expensesApi.add({
+        dateKey: date,
+        name: name.trim(),
+        direction,
+        amountRupees: Math.trunc(typed),
+      }),
     onSuccess: async () => {
       // The date is deliberately kept: entering a run of receipts from the same day should
       // not mean re-picking it for every one.
       setName('');
       setAmount('');
+      // The direction is deliberately *not* kept. Most rows are expenses, and a sticky
+      // "Income" would book the next salary as a grant — which there is no edit screen to
+      // correct, only delete and re-enter.
+      setDirection('EXPENSE');
       await refresh();
     },
   });
@@ -417,7 +516,10 @@ function ExpensesReport() {
               <span className="text-emerald-700">
                 Sent {emailResult.month} to the report address — {emailResult.rowCount}{' '}
                 {emailResult.rowCount === 1 ? 'entry' : 'entries'},{' '}
-                {formatINR(emailResult.totalRupees)}.
+                {formatINR(emailResult.totalRupees)} spent
+                {emailResult.gainCount > 0 &&
+                  ` · ${formatINR(emailResult.gainRupees)} other income`}
+                .
               </span>
             ) : (
               <span className="text-red-700">
@@ -443,26 +545,36 @@ function ExpensesReport() {
           <div className="grid gap-4 sm:grid-cols-4">
             <Card>
               <CardBody>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Collected in {month}</p>
-                <p className="text-2xl font-semibold">{formatINR(expenses.data.collectedRupees)}</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Money in {month}</p>
+                <p className="text-2xl font-semibold">{formatINR(expenses.data.moneyInRupees)}</p>
+                {/* Broken out rather than left as one number: the fee half is the only half
+                    that can be reconciled against the receipt book, and it is the only half
+                    that "of X invoiced" means anything about — a grant was never billed to
+                    anyone. */}
                 <p className="text-xs text-slate-500">
-                  of {formatINR(expenses.data.invoicedRupees)} invoiced
+                  {formatINR(expenses.data.collectedRupees)} fees of{' '}
+                  {formatINR(expenses.data.invoicedRupees)} invoiced
+                </p>
+                <p className="text-xs text-slate-500">
+                  {formatINR(expenses.data.gainRupees)} other income
                 </p>
               </CardBody>
             </Card>
             <Card>
               <CardBody>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Expenses in {month}</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Expenses in {month}
+                </p>
                 <p className="text-2xl font-semibold">{formatINR(expenses.data.totalRupees)}</p>
                 <p className="text-xs text-slate-500">
-                  {expenses.data.items.length}{' '}
-                  {expenses.data.items.length === 1 ? 'entry' : 'entries'}
+                  {expenseItems.length} {expenseItems.length === 1 ? 'entry' : 'entries'}
                 </p>
               </CardBody>
             </Card>
             <ProfitCard
               label="This month"
               collectedRupees={expenses.data.collectedRupees}
+              gainRupees={expenses.data.gainRupees}
               expenseRupees={expenses.data.totalRupees}
             />
             <Card>
@@ -483,11 +595,10 @@ function ExpensesReport() {
           {expenses.data.allTime && (
             <p className="text-xs text-slate-500">
               <span className="font-medium text-slate-600">All time total:</span> collected{' '}
-              {formatINR(expenses.data.allTime.collectedRupees)} · spent{' '}
+              {formatINR(expenses.data.allTime.collectedRupees)} · other income{' '}
+              {formatINR(expenses.data.allTime.gainRupees)} · spent{' '}
               {formatINR(expenses.data.allTime.expenseRupees)} ·{' '}
-              {netLabel(
-                expenses.data.allTime.collectedRupees - expenses.data.allTime.expenseRupees,
-              )}
+              {netLabel(netRupees(expenses.data.allTime))}
             </p>
           )}
 
@@ -496,60 +607,31 @@ function ExpensesReport() {
               title={`Expenses in ${month}`}
               description="Salaries, fuel, bills — anything the school paid for this month."
             />
-            {/* Tight rows on purpose: a month of salaries and bills is a list to scan, not a
-                stack of cards. The remove control is a bare icon rather than a `Button`,
-                whose `h-8` would set the row height on its own.
+            <LedgerList
+              items={expenseItems}
+              emptyLabel="No expenses recorded for this month yet."
+              totalLabel={`Total spent in ${expenses.data.month}`}
+              totalRupees={expenses.data.totalRupees}
+              onRemove={remove.mutate}
+              removing={remove.isPending}
+            />
 
-                Capped at `max-w-xl` so a short name and its amount are not left at opposite
-                ends of a wide card — the amounts still right-align into one column, which is
-                what makes a list of numbers comparable at a glance. */}
-            <CardBody className="max-w-xl divide-y divide-slate-100 py-2">
-              {expenses.data.items.length === 0 && (
-                <p className="text-sm text-slate-500">Nothing recorded for this month yet.</p>
-              )}
-              {expenses.data.items.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-3 py-1.5 text-sm first:pt-0 last:pb-0"
-                >
-                  <span className="w-20 shrink-0 tabular-nums text-slate-500">
-                    {formatDate(item.dateKey)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>
-                  <span className="flex shrink-0 items-center gap-3">
-                    <span className="w-24 text-right tabular-nums text-slate-600">
-                      {formatINR(item.amountRupees)}
-                    </span>
-                    <button
-                      type="button"
-                      className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50"
-                      aria-label={`Remove ${item.name}`}
-                      title="Remove"
-                      disabled={remove.isPending}
-                      onClick={() => remove.mutate(item.id)}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden />
-                    </button>
-                  </span>
-                </div>
-              ))}
-
-              {expenses.data.items.length > 0 && (
-                <div className="flex items-center gap-3 py-1.5 text-sm first:pt-0 last:pb-0">
-                  <span className="min-w-0 flex-1 font-semibold">
-                    Total for {expenses.data.month}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-3">
-                    <span className="w-24 text-right font-semibold tabular-nums">
-                      {formatINR(expenses.data.totalRupees)}
-                    </span>
-                    {/* Matches the remove button's 24px, so the total sits in the same
-                        column as the amounts above rather than one icon to the right. */}
-                    <span className="w-6" aria-hidden />
-                  </span>
-                </div>
-              )}
-            </CardBody>
+            {/* A second list rather than one mixed one. The amounts right-align into a single
+                column precisely so they can be added up by eye, and a column holding both
+                directions would give an answer wrong by twice the income — with a footer
+                total of a column it does not total. */}
+            <CardHeader
+              title={`Other income in ${month}`}
+              description="Funds, grants, donations — money in that nobody was invoiced for."
+            />
+            <LedgerList
+              items={gainItems}
+              emptyLabel="No other income recorded for this month yet."
+              totalLabel={`Total other income in ${expenses.data.month}`}
+              totalRupees={expenses.data.gainRupees}
+              onRemove={remove.mutate}
+              removing={remove.isPending}
+            />
 
             <CardBody className="space-y-3 border-t border-slate-100">
               {add.error && <ErrorBlock message={(add.error as Error).message} />}
@@ -566,12 +648,25 @@ function ExpensesReport() {
                     onChange={setDate}
                   />
                 </Field>
-                <Field label="What was it for" required className="sm:col-span-5">
+                <Field label="Type" required className="sm:col-span-2">
+                  <Select
+                    value={direction}
+                    onChange={(e) => setDirection(e.target.value as ExpenseDirection)}
+                  >
+                    <option value="EXPENSE">Expense</option>
+                    <option value="INCOME">Income</option>
+                  </Select>
+                </Field>
+                <Field label="What was it for" required className="sm:col-span-3">
                   <Input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     maxLength={80}
-                    placeholder="Teacher salary, Petrol, Electricity…"
+                    placeholder={
+                      isIncome
+                        ? 'SSA grant, Alumni donation…'
+                        : 'Teacher salary, Petrol, Electricity…'
+                    }
                   />
                 </Field>
                 <Field label="Amount (₹)" required error={amountError} className="sm:col-span-2">
@@ -598,13 +693,82 @@ function ExpensesReport() {
   );
 }
 
-/** "profit ₹500" / "loss ₹500" — the sign said in words, not left to a minus sign. */
-function netLabel(netRupees: number): string {
-  return `${netRupees >= 0 ? 'profit' : 'loss'} ${formatINR(Math.abs(netRupees))}`;
+/**
+ * One side of the month's ledger: tight rows and a footer total.
+ *
+ * Tight rows on purpose — a month of salaries and bills is a list to scan, not a stack of
+ * cards. The remove control is a bare icon rather than a `Button`, whose `h-8` would set the
+ * row height on its own.
+ *
+ * Capped at `max-w-2xl` so a short name and its amount are not left at opposite ends of a wide
+ * card — the amounts still right-align into one column, which is what makes a list of numbers
+ * comparable at a glance. Wide enough, though, that neither fixed column has to wrap:
+ * `05-08-2026` and `₹1,00,00,000` are both ten characters or more, and a date broken over two
+ * lines sets the height of every row around it.
+ */
+function LedgerList({
+  items,
+  emptyLabel,
+  totalLabel,
+  totalRupees,
+  onRemove,
+  removing,
+}: {
+  items: ExpenseDto[];
+  emptyLabel: string;
+  totalLabel: string;
+  totalRupees: number;
+  onRemove: (id: string) => void;
+  removing: boolean;
+}) {
+  return (
+    <CardBody className="max-w-2xl divide-y divide-slate-100 py-2">
+      {items.length === 0 && <p className="text-sm text-slate-500">{emptyLabel}</p>}
+      {items.map((item) => (
+        <div key={item.id} className="flex items-center gap-3 py-1.5 text-sm first:pt-0 last:pb-0">
+          <span className="w-24 shrink-0 whitespace-nowrap tabular-nums text-slate-500">
+            {formatDate(item.dateKey)}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>
+          <span className="flex shrink-0 items-center gap-3">
+            {/* Wide enough for ₹1,00,00,000, which the income ceiling allows. */}
+            <span className="w-32 text-right tabular-nums text-slate-600">
+              {formatINR(item.amountRupees)}
+            </span>
+            <button
+              type="button"
+              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-50"
+              aria-label={`Remove ${item.name}`}
+              title="Remove"
+              disabled={removing}
+              onClick={() => onRemove(item.id)}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden />
+            </button>
+          </span>
+        </div>
+      ))}
+
+      {items.length > 0 && (
+        <div className="flex items-center gap-3 py-1.5 text-sm first:pt-0 last:pb-0">
+          <span className="min-w-0 flex-1 font-semibold">{totalLabel}</span>
+          <span className="flex shrink-0 items-center gap-3">
+            <span className="w-32 text-right font-semibold tabular-nums">
+              {formatINR(totalRupees)}
+            </span>
+            {/* Matches the remove button's 24px, so the total sits in the same column as the
+                amounts above rather than one icon to the right. */}
+            <span className="w-6" aria-hidden />
+          </span>
+        </div>
+      )}
+    </CardBody>
+  );
 }
 
 /**
- * Fee collection minus recorded expenses, green when ahead and red when behind.
+ * Everything that came in minus everything recorded as spent, green when ahead and red when
+ * behind.
  *
  * The only place in this app that colours a figure by its sign — red is otherwise reserved
  * for destructive actions. It earns the exception because the whole point of the card is
@@ -613,13 +777,15 @@ function netLabel(netRupees: number): string {
 function ProfitCard({
   label,
   collectedRupees,
+  gainRupees,
   expenseRupees,
 }: {
   label: string;
   collectedRupees: number;
+  gainRupees: number;
   expenseRupees: number;
 }) {
-  const net = collectedRupees - expenseRupees;
+  const net = netRupees({ collectedRupees, gainRupees, expenseRupees });
   const inProfit = net >= 0;
 
   return (
@@ -631,7 +797,7 @@ function ProfitCard({
         <p className={cn('text-2xl font-semibold', inProfit ? 'text-emerald-700' : 'text-red-700')}>
           {formatINR(Math.abs(net))}
         </p>
-        <p className="text-xs text-slate-500">{label} · collected minus expenses</p>
+        <p className="text-xs text-slate-500">{label} · money in minus expenses</p>
       </CardBody>
     </Card>
   );
@@ -666,7 +832,12 @@ function AttendanceReport() {
               onChange={(e) => setThreshold(Number(e.target.value))}
             />
           </label>
-          <Select aria-label="Class" className="w-40" value={classCode} onChange={(e) => setClassCode(e.target.value)}>
+          <Select
+            aria-label="Class"
+            className="w-40"
+            value={classCode}
+            onChange={(e) => setClassCode(e.target.value)}
+          >
             <option value="">All classes</option>
             {CLASS_CODES.map((code) => (
               <option key={code} value={code}>
@@ -693,26 +864,43 @@ function AttendanceReport() {
               <table className="min-w-full text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th scope="col" className="px-5 py-3 font-medium">Student</th>
-                    <th scope="col" className="px-5 py-3 font-medium">Class</th>
-                    <th scope="col" className="px-5 py-3 text-right font-medium">Present</th>
-                    <th scope="col" className="px-5 py-3 text-right font-medium">Absent</th>
-                    <th scope="col" className="px-5 py-3 text-right font-medium">Working days</th>
-                    <th scope="col" className="px-5 py-3 text-right font-medium">%</th>
+                    <th scope="col" className="px-5 py-3 font-medium">
+                      Student
+                    </th>
+                    <th scope="col" className="px-5 py-3 font-medium">
+                      Class
+                    </th>
+                    <th scope="col" className="px-5 py-3 text-right font-medium">
+                      Present
+                    </th>
+                    <th scope="col" className="px-5 py-3 text-right font-medium">
+                      Absent
+                    </th>
+                    <th scope="col" className="px-5 py-3 text-right font-medium">
+                      Working days
+                    </th>
+                    <th scope="col" className="px-5 py-3 text-right font-medium">
+                      %
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {defaulters.data.items.map((item) => (
                     <tr key={item.studentId} className="hover:bg-slate-50">
                       <td className="px-5 py-3">
-                        <Link to={`/students/${item.studentId}`} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">
+                        <Link
+                          to={`/students/${item.studentId}`}
+                          className="font-medium text-slate-900 hover:text-brand-700 hover:underline"
+                        >
                           {item.fullName}
                         </Link>
                       </td>
                       <td className="px-5 py-3 text-slate-600">{classLabel(item.classCode)}</td>
                       <td className="px-5 py-3 text-right tabular-nums">{item.totals.present}</td>
                       <td className="px-5 py-3 text-right tabular-nums">{item.totals.absent}</td>
-                      <td className="px-5 py-3 text-right tabular-nums">{item.totals.workingDays}</td>
+                      <td className="px-5 py-3 text-right tabular-nums">
+                        {item.totals.workingDays}
+                      </td>
                       <td className="px-5 py-3 text-right">
                         <Badge tone="red">{item.totals.percentage}%</Badge>
                       </td>

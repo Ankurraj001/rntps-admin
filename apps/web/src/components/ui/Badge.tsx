@@ -11,7 +11,13 @@ const TONES = {
 
 export type BadgeTone = keyof typeof TONES;
 
-export function Badge({ tone = 'slate', children }: { tone?: BadgeTone; children: React.ReactNode }) {
+export function Badge({
+  tone = 'slate',
+  children,
+}: {
+  tone?: BadgeTone;
+  children: React.ReactNode;
+}) {
   return (
     <span
       className={cn(
@@ -40,4 +46,16 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function StatusBadge({ status }: { status: string }) {
   return <Badge tone={STATUS_TONES[status] ?? 'slate'}>{STATUS_LABELS[status] ?? status}</Badge>;
+}
+
+/**
+ * The same status as plain text, for a list where nearly every row reads the same.
+ *
+ * The students list defaults to the ACTIVE filter, so a coloured badge painted a whole
+ * column green and drew the eye to the one thing on the row that was never in question. A
+ * badge earns its emphasis where a value is exceptional; here it was noise. Shares
+ * `STATUS_LABELS` with `StatusBadge` so the wording cannot drift between the two.
+ */
+export function StatusText({ status }: { status: string }) {
+  return <span className="text-slate-600">{STATUS_LABELS[status] ?? status}</span>;
 }

@@ -2,7 +2,7 @@ import { classLabel, collectionReportQuerySchema, duesReportQuerySchema } from '
 import { Router } from 'express';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { csvFilename, rupeesForCsv, sendCsv, toCsv } from '../../lib/csv.js';
-import { requireAuth, requireRole } from '../../middleware/auth.js';
+import { currentUser, requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate, validatedQuery } from '../../middleware/validate.js';
 import * as service from './reports.service.js';
 
@@ -10,11 +10,17 @@ export const reportRoutes = Router();
 
 reportRoutes.use(requireAuth());
 
-/** The dashboard is the one report a teacher may see, scoped by the UI to their classes. */
+/**
+ * The dashboard is the one report a teacher may see, scoped by the UI to their classes.
+ *
+ * Which is why the role is passed down rather than the whole payload being sent to everyone:
+ * the expense and income figures belong to the same admin-only set as /reports/dues and
+ * /expenses, and the response omits them entirely for a teacher.
+ */
 reportRoutes.get(
   '/dashboard',
-  asyncHandler(async (_req, res) => {
-    res.json(await service.getDashboard());
+  asyncHandler(async (req, res) => {
+    res.json(await service.getDashboard({ includeFinance: currentUser(req).role === 'ADMIN' }));
   }),
 );
 

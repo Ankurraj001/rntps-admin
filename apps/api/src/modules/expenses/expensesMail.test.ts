@@ -200,7 +200,9 @@ describe('monthlyExpensesEmail', () => {
     const body = monthlyExpensesEmail({
       month: MONTH,
       items: [{ dateKey: '2026-08-05', name: '<script>alert("x")</script>', amountRupees: 500 }],
+      gains: [],
       totalRupees: 500,
+      gainRupees: 0,
       collectedRupees: 900,
     });
 
@@ -208,15 +210,60 @@ describe('monthlyExpensesEmail', () => {
     expect(body.html).toContain('&lt;script&gt;');
   });
 
+  it('escapes an income name too', () => {
+    const body = monthlyExpensesEmail({
+      month: MONTH,
+      items: [],
+      gains: [{ dateKey: '2026-08-05', name: '<b>Donation</b>', amountRupees: 500 }],
+      totalRupees: 0,
+      gainRupees: 500,
+      collectedRupees: 900,
+    });
+
+    expect(body.html).not.toContain('<b>Donation</b>');
+    expect(body.html).toContain('&lt;b&gt;Donation&lt;/b&gt;');
+  });
+
   it('names a loss as a loss rather than leaving it to a minus sign', () => {
     const body = monthlyExpensesEmail({
       month: MONTH,
       items: [{ dateKey: '2026-08-05', name: 'Salaries', amountRupees: 10_000 }],
+      gains: [],
       totalRupees: 10_000,
+      gainRupees: 0,
       collectedRupees: 900,
     });
 
     expect(body.text).toContain('loss ₹9,100');
     expect(body.text).not.toContain('profit');
+  });
+
+  it('counts recorded income towards the month, turning a loss into a profit', () => {
+    const body = monthlyExpensesEmail({
+      month: MONTH,
+      items: [{ dateKey: '2026-08-05', name: 'Salaries', amountRupees: 10_000 }],
+      gains: [{ dateKey: '2026-08-06', name: 'SSA grant', amountRupees: 12_000 }],
+      totalRupees: 10_000,
+      gainRupees: 12_000,
+      collectedRupees: 900,
+    });
+
+    // 900 collected + 12,000 received - 10,000 spent.
+    expect(body.text).toContain('profit ₹2,900');
+    expect(body.text).toContain('Total other income: ₹12,000');
+    expect(body.text).toContain('SSA grant');
+  });
+
+  it('says so plainly when no income was recorded, rather than omitting the line', () => {
+    const body = monthlyExpensesEmail({
+      month: MONTH,
+      items: [{ dateKey: '2026-08-05', name: 'Salaries', amountRupees: 10_000 }],
+      gains: [],
+      totalRupees: 10_000,
+      gainRupees: 0,
+      collectedRupees: 900,
+    });
+
+    expect(body.text).toContain('Other income: none recorded');
   });
 });
