@@ -14,6 +14,7 @@ import {
   type CreateStudentPayload,
   type UpdateStudentPayload,
 } from '@rntps/shared';
+import type { PipelineStage } from 'mongoose';
 import { AppError } from '../../lib/AppError.js';
 import { duplicateKeyIncludes, isDuplicateKeyError } from '../../lib/mongoErrors.js';
 import { generateFamilyId, generateStudentId, getSettings } from '../../lib/ids.js';
@@ -51,7 +52,8 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export async function listStudents(query: ListStudentsQuery): Promise<Paginated<StudentDto>> {
+/** The directory filter, shared by the paginated list and the unpaginated CSV export. */
+function buildFilter(query: ListStudentsQuery): Record<string, unknown> {
   const filter: Record<string, unknown> = {};
   if (query.classCode) filter.classCode = query.classCode;
   if (query.status) filter.status = query.status;
@@ -67,17 +69,50 @@ export async function listStudents(query: ListStudentsQuery): Promise<Paginated<
       { apaarId: pattern },
     ];
   }
+  return filter;
+}
 
-  const sortField = query.sort === 'createdAt' ? 'createdAt' : query.sort;
-  const sort: Record<string, 1 | -1> = { [sortField]: query.order === 'desc' ? -1 : 1 };
-  if (sortField !== 'fullName') sort.fullName = 1;
+/**
+ * Runs the ordered directory query. `page: null` means every match, which is what the CSV
+ * export wants — the roll is a few hundred records, so there is nothing to stream.
+ *
+ * Sorting by class needs the aggregation branch: class codes are not alphabetical, since
+ * NURSERY, LKG and UKG sort *after* class 8 as strings and come out LKG, NURSERY, UKG among
+ * themselves. CLASS_CODES is the order the school's register runs in, so position in it is
+ * the only ordering that reads correctly, and `$indexOfArray` is how that is expressed.
+ * Every other sort field stays on the plain indexed `find()`.
+ */
+function findStudents(
+  filter: Record<string, unknown>,
+  query: ListStudentsQuery,
+  page: { skip: number; limit: number } | null,
+): Promise<StudentDoc[]> {
+  const direction: 1 | -1 = query.order === 'desc' ? -1 : 1;
+
+  if (query.sort === 'classCode') {
+    const stages: PipelineStage[] = [
+      { $match: filter },
+      { $addFields: { classOrder: { $indexOfArray: [[...CLASS_CODES], '$classCode'] } } },
+      { $sort: { classOrder: direction, fullName: 1 } },
+    ];
+    // $limit rejects 0, so the stages are added only when there is a page to cut.
+    if (page) stages.push({ $skip: page.skip }, { $limit: page.limit });
+    return Student.aggregate<StudentDoc>(stages);
+  }
+
+  const sort: Record<string, 1 | -1> = { [query.sort]: direction };
+  if (query.sort !== 'fullName') sort.fullName = 1;
+
+  const cursor = Student.find(filter).sort(sort);
+  if (page) cursor.skip(page.skip).limit(page.limit);
+  return cursor.lean<StudentDoc[]>();
+}
+
+export async function listStudents(query: ListStudentsQuery): Promise<Paginated<StudentDto>> {
+  const filter = buildFilter(query);
 
   const [items, total] = await Promise.all([
-    Student.find(filter)
-      .sort(sort)
-      .skip((query.page - 1) * query.limit)
-      .limit(query.limit)
-      .lean<StudentDoc[]>(),
+    findStudents(filter, query, { skip: (query.page - 1) * query.limit, limit: query.limit }),
     Student.countDocuments(filter),
   ]);
 
@@ -88,6 +123,16 @@ export async function listStudents(query: ListStudentsQuery): Promise<Paginated<
     total,
     totalPages: Math.max(1, Math.ceil(total / query.limit)),
   };
+}
+
+/**
+ * Every student matching the filters, in the same order, with no pagination — the CSV
+ * export. The office wants the whole filtered roll in one file, not the 25 rows that
+ * happen to be on screen.
+ */
+export async function exportStudents(query: ListStudentsQuery): Promise<StudentDto[]> {
+  const docs = await findStudents(buildFilter(query), query, null);
+  return docs.map(toDto);
 }
 
 export async function getStudent(studentId: string): Promise<StudentDto> {

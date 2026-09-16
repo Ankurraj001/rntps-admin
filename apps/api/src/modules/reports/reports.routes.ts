@@ -1,7 +1,7 @@
 import { classLabel, collectionReportQuerySchema, duesReportQuerySchema } from '@rntps/shared';
-import { Router, type Response } from 'express';
+import { Router } from 'express';
 import { asyncHandler } from '../../lib/asyncHandler.js';
-import { csvFilename, rupeesForCsv, toCsv } from '../../lib/csv.js';
+import { csvFilename, rupeesForCsv, sendCsv, toCsv } from '../../lib/csv.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate, validatedQuery } from '../../middleware/validate.js';
 import * as service from './reports.service.js';
@@ -9,14 +9,6 @@ import * as service from './reports.service.js';
 export const reportRoutes = Router();
 
 reportRoutes.use(requireAuth());
-
-function sendCsv(res: Response, filename: string, body: string): void {
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  // Excel needs a byte-order mark to read UTF-8 (student names) correctly. Written as
-  // an escape rather than a literal BOM so it is visible in the source.
-  res.send(`\uFEFF${body}`);
-}
 
 /** The dashboard is the one report a teacher may see, scoped by the UI to their classes. */
 reportRoutes.get(

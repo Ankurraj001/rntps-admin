@@ -1,20 +1,82 @@
 import {
   addChargeSchema,
+  classLabel,
   createStudentSchema,
+  formatAadhaar,
   listStudentsQuerySchema,
   promoteStudentsSchema,
+  toDateKey,
   updateStudentSchema,
   updateStudentStatusSchema,
+  type StudentDto,
 } from '@rntps/shared';
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../../lib/asyncHandler.js';
+import { csvFilename, sendCsv, toCsv } from '../../lib/csv.js';
 import { recordAudit } from '../../lib/audit.js';
 import { currentUser } from '../../middleware/auth.js';
 import { validatedBody, validatedQuery } from '../../middleware/validate.js';
 import * as service from './student.service.js';
 
+const CSV_HEADERS = [
+  'Student ID',
+  'Name',
+  'Class',
+  'Roll',
+  'DOB',
+  'Gender',
+  'Admission date',
+  'Aadhaar',
+  'APAAR ID',
+  'Status',
+  'Family ID',
+  'Primary guardian',
+  'Relation',
+  'Phone',
+  'Transport',
+  'Address',
+  'City',
+  'Pincode',
+];
+
+function csvRow(student: StudentDto): unknown[] {
+  const primary = student.guardians.find((guardian) => guardian.isPrimary) ?? student.guardians[0];
+  return [
+    student.studentId,
+    student.fullName,
+    classLabel(student.classCode),
+    student.rollNo ?? '',
+    student.dob,
+    student.gender,
+    student.admissionDate,
+    // Spaced rather than bare: twelve unbroken digits are read as a number by Excel and
+    // shown in scientific notation, which is not something the office can copy off a card.
+    student.aadhaar ? formatAadhaar(student.aadhaar) : '',
+    student.apaarId ?? '',
+    student.status,
+    student.familyId,
+    primary?.name ?? '',
+    primary?.relation ?? '',
+    // The ten digits the school dials, not the stored 91-prefixed form.
+    primary ? primary.phone.replace(/^91/, '') : '',
+    student.transportOpted ? 'Yes' : 'No',
+    [student.address.line1, student.address.line2].filter(Boolean).join(', '),
+    student.address.city,
+    student.address.pincode,
+  ];
+}
+
 export const list = asyncHandler(async (req: Request, res: Response) => {
-  res.json(await service.listStudents(validatedQuery(req, listStudentsQuerySchema)));
+  const query = validatedQuery(req, listStudentsQuerySchema);
+
+  // Same filters and ordering as the table, but the whole result set rather than one page.
+  if (req.query.format === 'csv') {
+    const students = await service.exportStudents(query);
+    sendCsv(res, csvFilename('students', toDateKey()), toCsv(CSV_HEADERS, students.map(csvRow)));
+    return;
+  }
+
+  res.json(await service.listStudents(query));
 });
 
 export const getOne = asyncHandler(async (req: Request, res: Response) => {

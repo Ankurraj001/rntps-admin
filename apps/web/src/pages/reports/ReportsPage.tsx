@@ -4,7 +4,7 @@ import { Download, Mail, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { expenseKeys, expensesApi, type ExpenseEmailResult } from '@/api/expenses';
-import { downloadCsv, reportKeys, reportsApi } from '@/api/reports';
+import { reportKeys, reportsApi } from '@/api/reports';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -12,6 +12,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { DateInput } from '@/components/ui/DateInput';
 import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Field, Input, Select } from '@/components/ui/Field';
+import { downloadCsv } from '@/lib/api';
 import { cn, formatDate } from '@/lib/utils';
 
 const TABS = ['Expenses', 'Dues', 'Collection', 'Attendance'] as const;

@@ -183,3 +183,29 @@ export function qs(params: Record<string, string | number | undefined | null>): 
   const str = search.toString();
   return str ? `?${str}` : '';
 }
+
+/**
+ * Downloads a CSV.
+ *
+ * A plain <a href> cannot be used: the access token lives in memory, so a browser-issued
+ * navigation would arrive without an Authorization header and get a 401. This fetches
+ * with the header attached and hands the browser a blob instead.
+ */
+export async function downloadCsv(
+  path: string,
+  params: Record<string, string | number | undefined>,
+  filename: string,
+): Promise<void> {
+  const blob = await api.getBlob(`${path}${qs({ ...params, format: 'csv' })}`);
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

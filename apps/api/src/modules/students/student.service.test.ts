@@ -172,6 +172,19 @@ describe('listStudents', () => {
     expect((await service.listStudents(listQuery({}))).total).toBe(4);
   });
 
+  it('sorts by class in the register\u2019s order, not alphabetically by code', async () => {
+    await service.createStudent(studentInput({ fullName: 'Myra Bose', classCode: 'UKG' }));
+    await service.createStudent(studentInput({ fullName: 'Reyansh Jha', classCode: 'LKG' }));
+
+    const ascending = await service.listStudents(listQuery({ sort: 'classCode' }));
+    // Alphabetically the codes come out 5, LKG, NURSERY, UKG \u2014 the pre-primary classes
+    // land after class 5 and in the wrong order among themselves.
+    expect(ascending.items.map((s) => s.classCode)).toEqual(['NURSERY', 'LKG', 'UKG', '5', '5']);
+
+    const descending = await service.listStudents(listQuery({ sort: 'classCode', order: 'desc' }));
+    expect(descending.items.map((s) => s.classCode)).toEqual(['5', '5', 'UKG', 'LKG', 'NURSERY']);
+  });
+
   it('combines the transport filter with the class filter rather than replacing it', async () => {
     await service.createStudent(studentInput({ fullName: 'Ishaan Rao', classCode: '5', transportOpted: true }));
     await service.createStudent(studentInput({ fullName: 'Myra Bose', classCode: 'NURSERY', transportOpted: true }));

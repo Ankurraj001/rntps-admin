@@ -6,7 +6,7 @@ import {
   updateStudentSchema,
   updateStudentStatusSchema,
 } from '@rntps/shared';
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import * as controller from './student.controller.js';
@@ -26,7 +26,17 @@ studentRoutes.get('/search-sibling', adminOnly, controller.searchSiblings);
 studentRoutes.get('/rollover-status', adminOnly, controller.rolloverStatus);
 studentRoutes.post('/promote', adminOnly, validate(promoteStudentsSchema), controller.promote);
 
-studentRoutes.get('/', validate(listStudentsQuerySchema, 'query'), controller.list);
+/**
+ * The CSV export is a bulk extract of the roll's personal data — Aadhaar, dates of birth,
+ * guardian phone numbers — so it is admin-only like every other export, while the paginated
+ * JSON list stays open to teachers, who need the directory to look up the children they teach.
+ */
+const adminOnlyForCsv: RequestHandler = (req, res, next) => {
+  if (req.query.format === 'csv') adminOnly(req, res, next);
+  else next();
+};
+
+studentRoutes.get('/', validate(listStudentsQuerySchema, 'query'), adminOnlyForCsv, controller.list);
 studentRoutes.post('/', adminOnly, validate(createStudentSchema), controller.create);
 
 studentRoutes.get('/:studentId', controller.getOne);

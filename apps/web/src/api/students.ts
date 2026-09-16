@@ -8,7 +8,7 @@ import type {
   Address,
   Guardian,
 } from '@rntps/shared';
-import { api, qs } from '@/lib/api';
+import { api, downloadCsv, qs } from '@/lib/api';
 
 // A type alias rather than an interface: only aliases get the implicit index
 // signature that qs() needs.
@@ -69,6 +69,18 @@ export const studentsApi = {
   removeCharge: (studentId: string, chargeId: string) =>
     api.del<{ items: StudentChargeDto[] }>(`/students/${studentId}/charges/${chargeId}`),
 };
+
+/**
+ * Downloads the filtered roll as a CSV.
+ *
+ * Shares `downloadCsv` with the reports page: the access token lives in memory, so a plain
+ * <a href> would navigate without an Authorization header and come back 401.
+ */
+export function downloadStudentsCsv(params: StudentListParams, filename: string): Promise<void> {
+  // page/limit are the table's, not the export's — the server sends every matching row.
+  const { page: _page, limit: _limit, ...filters } = params;
+  return downloadCsv('/students', filters, filename);
+}
 
 /** Query keys are centralised so mutations can invalidate precisely. */
 export const studentKeys = {

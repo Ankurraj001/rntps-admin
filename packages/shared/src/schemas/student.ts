@@ -257,6 +257,12 @@ export const listStudentsQuerySchema = paginationSchema.extend({
   transportOnly: z.coerce.boolean().optional(),
   sort: z.enum(['fullName', 'rollNo', 'createdAt', 'classCode']).default('fullName'),
   order: z.enum(['asc', 'desc']).default('asc'),
+  /**
+   * `csv` swaps the paginated JSON page for a CSV download of every matching row. It has to
+   * be declared here rather than read off the raw query: `validate()` replaces req.query
+   * with the parsed object, so an undeclared key never reaches the handler.
+   */
+  format: z.enum(['json', 'csv']).optional(),
 });
 
 export const promoteStudentsSchema = z.object({

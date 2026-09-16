@@ -1,20 +1,23 @@
-import { CLASS_CODES, STUDENT_STATUSES, classLabel } from '@rntps/shared';
+import { CLASS_CODES, STUDENT_STATUSES, classLabel, formatAadhaar, toDateKey } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
-import { Pencil, Plus, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, Pencil, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { studentKeys, studentsApi, type StudentListParams } from '@/api/students';
+import { downloadStudentsCsv, studentKeys, studentsApi, type StudentListParams } from '@/api/students';
 import { PageHeader } from '@/components/layout/AppShell';
 import { StatusBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { EmptyState, ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
+import { EmptyState, ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
 import { Input, Select } from '@/components/ui/Field';
 import { useAuth } from '@/auth/AuthProvider';
 import { useDebounced } from '@/hooks/useDebounced';
-import { displayPhone } from '@/lib/utils';
+import { displayPhone, formatDate } from '@/lib/utils';
 
 const PAGE_SIZE = 25;
+
+/** The columns this table offers to sort by; all three are server-side orderings. */
+type SortField = 'fullName' | 'rollNo' | 'classCode';
 
 export function StudentsListPage() {
   const { user } = useAuth();
@@ -23,6 +26,8 @@ export function StudentsListPage() {
   const [classCode, setClassCode] = useState('');
   const [status, setStatus] = useState('ACTIVE');
   const [transportOnly, setTransportOnly] = useState(false);
+  const [sort, setSort] = useState<SortField>('fullName');
+  const [order, setOrder] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
 
   const debouncedSearch = useDebounced(search);
@@ -34,12 +39,32 @@ export function StudentsListPage() {
     classCode: classCode || undefined,
     status: status || undefined,
     transportOnly: transportOnly ? 'true' : undefined,
+    sort,
+    order,
   };
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: studentKeys.list(params),
     queryFn: () => studentsApi.list(params),
   });
+
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  // The download is a one-off side effect with no cached result, so it is plain state
+  // rather than a query — and its failure has to surface somewhere, since a click that
+  // silently produces no file looks like a broken button.
+  async function exportCsv() {
+    setExporting(true);
+    setExportError('');
+    try {
+      await downloadStudentsCsv(params, `students-${toDateKey()}.csv`);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   // Drives the empty state: with a filter on, "no students yet" would be a lie and the
   // "onboard the first student" prompt actively misleading.
@@ -53,6 +78,20 @@ export function StudentsListPage() {
     };
   }
 
+  // First click on a column sorts it ascending; clicking the same one again reverses it.
+  // Every column reads naturally ascending — A-Z by name, 1-upwards by roll number, and
+  // Nursery-upwards by class (the API orders classes by the register's order, not the
+  // alphabetical order of the codes).
+  function toggleSort(field: SortField) {
+    if (sort === field) {
+      setOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSort(field);
+      setOrder('asc');
+    }
+    setPage(1);
+  }
+
   return (
     <>
       <PageHeader
@@ -60,12 +99,18 @@ export function StudentsListPage() {
         description={isAdmin ? 'Onboard students and manage their records.' : 'Directory of students on the roll.'}
         action={
           isAdmin ? (
-            <Link to="/students/new">
-              <Button>
-                <Plus className="h-4 w-4" aria-hidden />
-                Onboard student
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => void exportCsv()} disabled={exporting || !data?.total}>
+                {exporting ? <Spinner /> : <Download className="h-4 w-4" aria-hidden />}
+                Export CSV
               </Button>
-            </Link>
+              <Link to="/students/new">
+                <Button>
+                  <Plus className="h-4 w-4" aria-hidden />
+                  Onboard student
+                </Button>
+              </Link>
+            </div>
           ) : undefined
         }
       />
@@ -123,6 +168,8 @@ export function StudentsListPage() {
           </div>
         </Card>
 
+        {exportError && <ErrorBlock message={exportError} onRetry={() => void exportCsv()} />}
+
         <Card>
           {isPending && <LoadingBlock label="Loading students…" />}
           {error && <div className="p-4"><ErrorBlock message={(error as Error).message} onRetry={() => void refetch()} /></div>}
@@ -152,9 +199,11 @@ export function StudentsListPage() {
                   <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th scope="col" className="px-5 py-3 font-medium">Student ID</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Name</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Class</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Roll</th>
+                      <SortableHeader label="Name" field="fullName" sort={sort} order={order} onSort={toggleSort} />
+                      <SortableHeader label="Class" field="classCode" sort={sort} order={order} onSort={toggleSort} />
+                      <SortableHeader label="Roll" field="rollNo" sort={sort} order={order} onSort={toggleSort} />
+                      <th scope="col" className="px-5 py-3 font-medium">DOB</th>
+                      <th scope="col" className="px-5 py-3 font-medium">Aadhaar</th>
                       <th scope="col" className="px-5 py-3 font-medium">Primary guardian</th>
                       <th scope="col" className="px-5 py-3 font-medium">Status</th>
                       {isAdmin && (
@@ -181,6 +230,10 @@ export function StudentsListPage() {
                           </td>
                           <td className="px-5 py-3 text-slate-600">{classLabel(student.classCode)}</td>
                           <td className="px-5 py-3 text-slate-600">{student.rollNo ?? '—'}</td>
+                          <td className="whitespace-nowrap px-5 py-3 text-slate-600">{formatDate(student.dob)}</td>
+                          <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-slate-600">
+                            {student.aadhaar ? formatAadhaar(student.aadhaar) : '—'}
+                          </td>
                           <td className="px-5 py-3 text-slate-600">
                             {primary ? (
                               <>
@@ -234,5 +287,45 @@ export function StudentsListPage() {
         </Card>
       </div>
     </>
+  );
+}
+
+/**
+ * A column header that sorts.
+ *
+ * aria-sort carries the state to a screen reader, which a coloured arrow alone does not.
+ * Sorting is done by the API over the whole result set, not just the page on screen.
+ */
+function SortableHeader({
+  label,
+  field,
+  sort,
+  order,
+  onSort,
+}: {
+  label: string;
+  field: SortField;
+  sort: SortField;
+  order: 'asc' | 'desc';
+  onSort: (field: SortField) => void;
+}) {
+  const active = sort === field;
+  const Icon = !active ? ArrowUpDown : order === 'asc' ? ArrowUp : ArrowDown;
+
+  return (
+    <th
+      scope="col"
+      className="px-5 py-3 font-medium"
+      aria-sort={active ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className="flex items-center gap-1 uppercase tracking-wide hover:text-slate-800"
+      >
+        {label}
+        <Icon className={active ? 'h-3.5 w-3.5 text-brand-600' : 'h-3.5 w-3.5 text-slate-400'} aria-hidden />
+      </button>
+    </th>
   );
 }

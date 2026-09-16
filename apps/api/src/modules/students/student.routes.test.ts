@@ -110,6 +110,49 @@ describe('GET /api/v1/students', () => {
   });
 });
 
+describe('GET /api/v1/students?format=csv', () => {
+  beforeEach(async () => {
+    await asAdmin.post('/api/v1/students').send(validBody).expect(201);
+    await asAdmin
+      .post('/api/v1/students')
+      .send({ ...validBody, fullName: 'Kabir Singh', classCode: 'NURSERY' })
+      .expect(201);
+  });
+
+  it('exports the roll with a BOM and an attachment header', async () => {
+    const res = await asAdmin.get('/api/v1/students?format=csv').expect(200);
+
+    expect(res.headers['content-type']).toMatch(/text\/csv/);
+    expect(res.headers['content-disposition']).toMatch(/attachment; filename="students-/);
+    expect(res.text.charCodeAt(0)).toBe(0xfeff);
+    expect(res.text).toContain('AARAV SHARMA');
+    expect(res.text).toContain('KABIR SINGH');
+    // The guardian number is the ten digits the school dials, not the stored 91 form.
+    expect(res.text).toContain('9876543210');
+  });
+
+  it('exports every row the filters match, not just the page the table is showing', async () => {
+    const res = await asAdmin.get('/api/v1/students?format=csv&page=1&limit=1').expect(200);
+
+    expect(res.text).toContain('AARAV SHARMA');
+    expect(res.text).toContain('KABIR SINGH');
+  });
+
+  it('honours the filters', async () => {
+    const res = await asAdmin.get('/api/v1/students?format=csv&classCode=NURSERY').expect(200);
+
+    expect(res.text).toContain('KABIR SINGH');
+    expect(res.text).not.toContain('AARAV SHARMA');
+  });
+
+  it('is admin-only, though a teacher may still read the JSON directory', async () => {
+    const { header } = await teacherAuth(['5']);
+
+    await request(app).get('/api/v1/students?format=csv').set('Authorization', header).expect(403);
+    await request(app).get('/api/v1/students').set('Authorization', header).expect(200);
+  });
+});
+
 describe('sibling endpoints', () => {
   it('serves defaults that pre-fill the form for a second child', async () => {
     const elder = await asAdmin.post('/api/v1/students')
