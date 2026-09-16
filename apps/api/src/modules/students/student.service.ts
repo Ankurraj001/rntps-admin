@@ -56,6 +56,7 @@ export async function listStudents(query: ListStudentsQuery): Promise<Paginated<
   if (query.classCode) filter.classCode = query.classCode;
   if (query.status) filter.status = query.status;
   if (query.familyId) filter.familyId = query.familyId;
+  if (query.transportOnly) filter.transportOpted = true;
   if (query.q) {
     const pattern = new RegExp(escapeRegex(query.q), 'i');
     filter.$or = [

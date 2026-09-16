@@ -32,6 +32,17 @@ async function billAndInvoice(classCode: string, fullName: string) {
   return student;
 }
 
+/** One bus rider and one walker in the same class, both billed for the same month. */
+async function billOneOfEach() {
+  await as.put('/api/v1/fees/structures/5/2026-27').send({ heads: HEADS }).expect(200);
+  const bus = await createStudent(
+    studentInput({ fullName: 'Bus Rider', classCode: '5', transportOpted: true }),
+  );
+  const walker = await createStudent(studentInput({ fullName: 'Walks To School', classCode: '5' }));
+  await as.post('/api/v1/fees/runs/commit').send({ period: PERIOD }).expect(200);
+  return { bus, walker };
+}
+
 beforeEach(async () => {
   await seedSettings();
   app = createApp();
@@ -133,6 +144,18 @@ describe('GET /reports/dues', () => {
     const res = await as.get('/api/v1/reports/dues?classCode=6').expect(200);
     expect(res.body.rows).toHaveLength(1);
     expect(res.body.rows[0].studentName).toBe('IN SIX');
+  });
+
+  it('narrows to students on school transport, and to everyone when unchecked', async () => {
+    await billOneOfEach();
+
+    const filtered = await as.get('/api/v1/reports/dues?transportOnly=true').expect(200);
+    expect(filtered.body.rows.map((row: { studentName: string }) => row.studentName)).toEqual(['BUS RIDER']);
+    expect(filtered.body.totals.balanceRupees).toBe(1_200);
+
+    // Off is the default, and the default must not hide anyone.
+    const all = await as.get('/api/v1/reports/dues').expect(200);
+    expect(all.body.rows).toHaveLength(2);
   });
 
   it('exports CSV with a BOM and an attachment header', async () => {
@@ -260,6 +283,30 @@ describe('GET /reports/collection', () => {
     // The dashboard reads the same totals, so listing reversals must not have leaked one in.
     const res = await as.get('/api/v1/reports/dashboard').expect(200);
     expect(res.body.month.collectedRupees).toBe(0);
+  });
+
+  it('narrows receipts to students on school transport, and to everyone when unchecked', async () => {
+    const { bus, walker } = await billOneOfEach();
+
+    await as
+      .post(`/api/v1/fees/invoices/${bus.studentId}:${PERIOD}/payments`)
+      .send({ amountRupees: 500, mode: 'CASH', paidAt: '2026-08-05' })
+      .expect(201);
+    await as
+      .post(`/api/v1/fees/invoices/${walker.studentId}:${PERIOD}/payments`)
+      .send({ amountRupees: 300, mode: 'UPI', paidAt: '2026-08-06' })
+      .expect(201);
+
+    const filtered = await as
+      .get('/api/v1/reports/collection?from=2026-08-01&to=2026-08-31&transportOnly=true')
+      .expect(200);
+    expect(filtered.body.rows.map((row: { studentName: string }) => row.studentName)).toEqual(['BUS RIDER']);
+    // Totals follow the filter, otherwise the card above the table contradicts it.
+    expect(filtered.body.totals).toMatchObject({ count: 1, amountRupees: 500 });
+    expect(filtered.body.totals.byMode).toEqual({ CASH: 500 });
+
+    const all = await as.get('/api/v1/reports/collection?from=2026-08-01&to=2026-08-31').expect(200);
+    expect(all.body.totals).toMatchObject({ count: 2, amountRupees: 800 });
   });
 
   it('requires both dates', async () => {

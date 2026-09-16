@@ -22,6 +22,7 @@ export function StudentsListPage() {
   const [search, setSearch] = useState('');
   const [classCode, setClassCode] = useState('');
   const [status, setStatus] = useState('ACTIVE');
+  const [transportOnly, setTransportOnly] = useState(false);
   const [page, setPage] = useState(1);
 
   const debouncedSearch = useDebounced(search);
@@ -32,6 +33,7 @@ export function StudentsListPage() {
     q: debouncedSearch || undefined,
     classCode: classCode || undefined,
     status: status || undefined,
+    transportOnly: transportOnly ? 'true' : undefined,
   };
 
   const { data, isPending, error, refetch } = useQuery({
@@ -39,9 +41,13 @@ export function StudentsListPage() {
     queryFn: () => studentsApi.list(params),
   });
 
+  // Drives the empty state: with a filter on, "no students yet" would be a lie and the
+  // "onboard the first student" prompt actively misleading.
+  const hasFilters = Boolean(debouncedSearch || classCode || transportOnly);
+
   // Any filter change invalidates the current page number.
-  function updateFilter(setter: (value: string) => void) {
-    return (value: string) => {
+  function updateFilter<T>(setter: (value: T) => void) {
+    return (value: T) => {
       setter(value);
       setPage(1);
     };
@@ -105,6 +111,15 @@ export function StudentsListPage() {
                 </option>
               ))}
             </Select>
+
+            <label className="flex h-10 items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={transportOnly}
+                onChange={(event) => updateFilter(setTransportOnly)(event.target.checked)}
+              />
+              Transport
+            </label>
           </div>
         </Card>
 
@@ -114,14 +129,14 @@ export function StudentsListPage() {
 
           {data && data.items.length === 0 && (
             <EmptyState
-              title={debouncedSearch || classCode ? 'No students match those filters' : 'No students yet'}
+              title={hasFilters ? 'No students match those filters' : 'No students yet'}
               description={
-                debouncedSearch || classCode
+                hasFilters
                   ? 'Try a different name, class or status.'
                   : 'Onboard the first student to get started.'
               }
               action={
-                !debouncedSearch && !classCode && isAdmin ? (
+                !hasFilters && isAdmin ? (
                   <Link to="/students/new">
                     <Button>Onboard student</Button>
                   </Link>

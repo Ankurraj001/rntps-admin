@@ -92,6 +92,12 @@ export const voidInvoiceSchema = z.object({
 export const collectionReportQuerySchema = z.object({
   from: z.string().regex(DATE_KEY_PATTERN),
   to: z.string().regex(DATE_KEY_PATTERN),
+  /**
+   * Narrows to receipts belonging to students who currently use school transport. Read
+   * off the student record rather than the invoice, so it follows a student who joins or
+   * leaves transport — the invoice snapshot predates the change.
+   */
+  transportOnly: z.coerce.boolean().optional(),
   /** Declared so validation does not strip it before the route can act on it. */
   format: z.enum(['json', 'csv']).optional(),
 });
@@ -99,6 +105,8 @@ export const collectionReportQuerySchema = z.object({
 export const duesReportQuerySchema = z.object({
   classCode: z.enum(CLASS_CODES).optional(),
   period: z.string().regex(PERIOD_PATTERN).optional(),
+  /** Narrows to students who currently use school transport. */
+  transportOnly: z.coerce.boolean().optional(),
   format: z.enum(['json', 'csv']).optional(),
 });
 

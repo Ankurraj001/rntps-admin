@@ -253,6 +253,8 @@ export const listStudentsQuerySchema = paginationSchema.extend({
   classCode: z.enum(CLASS_CODES).optional(),
   status: z.enum(STUDENT_STATUSES).optional(),
   familyId: z.string().trim().optional(),
+  /** Narrows to students who have opted into school transport. */
+  transportOnly: z.coerce.boolean().optional(),
   sort: z.enum(['fullName', 'rollNo', 'createdAt', 'classCode']).default('fullName'),
   order: z.enum(['asc', 'desc']).default('asc'),
 });

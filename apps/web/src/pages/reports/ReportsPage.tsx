@@ -65,7 +65,10 @@ export function ReportsPage() {
 
 function DuesReport() {
   const [classCode, setClassCode] = useState('');
-  const params = { classCode: classCode || undefined };
+  const [transportOnly, setTransportOnly] = useState(false);
+  // Sent as 'true' only when on: the API coerces the query string, and any value at all
+  // — including "false" — would read as on.
+  const params = { classCode: classCode || undefined, transportOnly: transportOnly ? 'true' : undefined };
   const dues = useQuery({ queryKey: reportKeys.dues(params), queryFn: () => reportsApi.dues(params) });
 
   return (
@@ -80,6 +83,10 @@ function DuesReport() {
               </option>
             ))}
           </Select>
+          <label className="flex h-10 items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={transportOnly} onChange={(e) => setTransportOnly(e.target.checked)} />
+            Transport
+          </label>
           <Button
             variant="secondary"
             className="ml-auto"
@@ -162,10 +169,14 @@ function CollectionReport() {
   const today = toDateKey();
   const [from, setFrom] = useState(`${today.slice(0, 7)}-01`);
   const [to, setTo] = useState(today);
+  const [transportOnly, setTransportOnly] = useState(false);
+  // Sent as 'true' only when on: the API coerces the query string, and any value at all
+  // — including "false" — would read as on.
+  const transportParam = transportOnly ? 'true' : undefined;
 
   const collection = useQuery({
-    queryKey: reportKeys.collection(from, to),
-    queryFn: () => reportsApi.collection(from, to),
+    queryKey: reportKeys.collection(from, to, transportParam),
+    queryFn: () => reportsApi.collection(from, to, transportParam),
     enabled: Boolean(from && to),
   });
 
@@ -181,10 +192,20 @@ function CollectionReport() {
             <span className="mb-1.5 block font-medium text-slate-700">To</span>
             <DateInput value={to} onChange={setTo} />
           </label>
+          <label className="flex h-10 items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={transportOnly} onChange={(e) => setTransportOnly(e.target.checked)} />
+            Transport
+          </label>
           <Button
             variant="secondary"
             className="ml-auto"
-            onClick={() => void downloadCsv('/reports/collection', { from, to }, `collection-${from}-to-${to}.csv`)}
+            onClick={() =>
+              void downloadCsv(
+                '/reports/collection',
+                { from, to, transportOnly: transportParam },
+                `collection-${from}-to-${to}.csv`,
+              )
+            }
           >
             <Download className="h-4 w-4" aria-hidden />
             Export CSV

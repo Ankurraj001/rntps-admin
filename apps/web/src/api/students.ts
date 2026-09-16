@@ -18,6 +18,8 @@ export type StudentListParams = {
   q?: string;
   classCode?: string;
   status?: string;
+  /** Sent as 'true' only when on — `z.coerce.boolean()` reads any value as true. */
+  transportOnly?: string;
   sort?: string;
   order?: 'asc' | 'desc';
 };

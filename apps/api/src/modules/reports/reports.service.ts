@@ -38,17 +38,33 @@ export interface DuesReport {
 }
 
 /**
+ * IDs of every student currently on school transport.
+ *
+ * Both money reports snapshot the student onto the invoice, so transport cannot be read
+ * off the invoice — it isn't there, and a snapshot would answer "did they use transport
+ * when this was billed?" rather than "do they use it now", which is the question the
+ * office is asking when it filters. At ~200 students the id list is small enough to hand
+ * straight to an `$in`.
+ */
+async function transportStudentIds(): Promise<string[]> {
+  const students = await Student.find({ transportOpted: true }).select('_id').lean<{ _id: string }[]>();
+  return students.map((student) => student._id);
+}
+
+/**
  * Everything currently owed, one row per student, with an aging bucket taken from the
  * oldest unpaid invoice — which is what tells the office who to chase first.
  */
 export async function getDuesReport(filters: {
   classCode?: ClassCode;
   period?: string;
+  transportOnly?: boolean;
 }): Promise<DuesReport> {
   const today = toDateKey();
   const filter: Record<string, unknown> = { status: { $in: ['DUE', 'PARTIAL'] } };
   if (filters.classCode) filter.classCodeSnapshot = filters.classCode;
   if (filters.period) filter.period = filters.period;
+  if (filters.transportOnly) filter.studentId = { $in: await transportStudentIds() };
 
   const invoices = await Invoice.find(filter).lean<InvoiceDoc[]>();
 
@@ -147,9 +163,16 @@ export interface CollectionReport {
  * reversal date instead would make the money appear collected in any report that closed
  * before the cheque bounced.
  */
-export async function getCollectionReport(from: string, to: string): Promise<CollectionReport> {
+export async function getCollectionReport(
+  from: string,
+  to: string,
+  filters: { transportOnly?: boolean } = {},
+): Promise<CollectionReport> {
+  const match: Record<string, unknown> = { 'payments.paidAt': { $gte: from, $lte: to } };
+  if (filters.transportOnly) match.studentId = { $in: await transportStudentIds() };
+
   const rows = await Invoice.aggregate<CollectionRow>([
-    { $match: { 'payments.paidAt': { $gte: from, $lte: to } } },
+    { $match: match },
     { $unwind: '$payments' },
     { $match: { 'payments.paidAt': { $gte: from, $lte: to } } },
     {

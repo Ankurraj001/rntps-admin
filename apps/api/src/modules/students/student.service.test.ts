@@ -160,6 +160,25 @@ describe('listStudents', () => {
     expect(page.items).toHaveLength(1);
     expect(page.totalPages).toBe(2);
   });
+
+  it('narrows to transport users when asked, and to everyone otherwise', async () => {
+    await service.createStudent(studentInput({ fullName: 'Ishaan Rao', classCode: '5', transportOpted: true }));
+
+    const onTransport = await service.listStudents(listQuery({ transportOnly: true }));
+    expect(onTransport.total).toBe(1);
+    expect(onTransport.items[0]?.fullName).toBe('ISHAAN RAO');
+
+    // Unchecked is absent, not `false` — the default has to leave the roll untouched.
+    expect((await service.listStudents(listQuery({}))).total).toBe(4);
+  });
+
+  it('combines the transport filter with the class filter rather than replacing it', async () => {
+    await service.createStudent(studentInput({ fullName: 'Ishaan Rao', classCode: '5', transportOpted: true }));
+    await service.createStudent(studentInput({ fullName: 'Myra Bose', classCode: 'NURSERY', transportOpted: true }));
+
+    const page = await service.listStudents(listQuery({ transportOnly: true, classCode: '5' }));
+    expect(page.items.map((s) => s.fullName)).toEqual(['ISHAAN RAO']);
+  });
 });
 
 describe('status changes', () => {

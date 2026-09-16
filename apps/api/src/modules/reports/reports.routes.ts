@@ -66,8 +66,8 @@ reportRoutes.get(
   requireRole('ADMIN'),
   validate(collectionReportQuerySchema, 'query'),
   asyncHandler(async (req, res) => {
-    const { from, to } = validatedQuery(req, collectionReportQuerySchema);
-    const report = await service.getCollectionReport(from, to);
+    const { from, to, transportOnly } = validatedQuery(req, collectionReportQuerySchema);
+    const report = await service.getCollectionReport(from, to, { transportOnly });
 
     if (req.query.format === 'csv') {
       sendCsv(

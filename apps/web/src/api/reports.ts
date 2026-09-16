@@ -76,10 +76,10 @@ export interface DashboardSummary {
 
 export const reportsApi = {
   dashboard: () => api.get<DashboardSummary>('/reports/dashboard'),
-  dues: (params: { classCode?: string; period?: string }) =>
+  dues: (params: { classCode?: string; period?: string; transportOnly?: string }) =>
     api.get<DuesReport>(`/reports/dues${qs(params)}`),
-  collection: (from: string, to: string) =>
-    api.get<CollectionReport>(`/reports/collection${qs({ from, to })}`),
+  collection: (from: string, to: string, transportOnly?: string) =>
+    api.get<CollectionReport>(`/reports/collection${qs({ from, to, transportOnly })}`),
   defaulters: (month: string, threshold: number, classCode?: string) =>
     api.get<{ month: string; threshold: number; items: AttendanceDefaulter[] }>(
       `/attendance/defaulters${qs({ month, threshold, classCode })}`,
@@ -115,7 +115,8 @@ export async function downloadCsv(
 export const reportKeys = {
   dashboard: ['reports', 'dashboard'] as const,
   dues: (params: object) => ['reports', 'dues', params] as const,
-  collection: (from: string, to: string) => ['reports', 'collection', from, to] as const,
+  collection: (from: string, to: string, transportOnly?: string) =>
+    ['reports', 'collection', from, to, transportOnly ?? 'all'] as const,
   defaulters: (month: string, threshold: number, classCode?: string) =>
     ['reports', 'defaulters', month, threshold, classCode ?? 'all'] as const,
 };
