@@ -4,13 +4,13 @@ import {
   AlertTriangle,
   CalendarCheck,
   CalendarDays,
-  Gift,
+  // Gift,  — re-enable with the "other income" dashboard tile, see below
   IndianRupee,
   MessageSquare,
   Plus,
   TrendingUp,
   Users,
-  Wallet,
+  // Wallet,  — re-enable with the profit/loss dashboard tile, see below
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -239,8 +239,17 @@ export function DashboardPage() {
                     value={formatINR(dashboard.data.outstanding.balanceRupees)}
                     hint={`${dashboard.data.outstanding.students} students`}
                   />
-                  {/* Rendered off `finance`, which the API sends only to an admin — the
-                      `isAdmin` check around this block is convenience, not the control. */}
+                  {/* Other income and profit/loss: switched off, not deleted. Uncomment the
+                      block below and the `Gift` / `Wallet` imports at the top of this file to
+                      put both tiles back — the API still sends `finance` (admin only), so
+                      nothing else has to change.
+
+                      Off because a grant or a donation arrives a few times a year, so on a
+                      screen read every day both tiles would sit at zero or unchanged almost
+                      always, and a tile nobody needs to look at trains the eye to skip the
+                      row it lives in. The figures are on Reports → Expenses, which is where a
+                      month actually gets reviewed.
+
                   {dashboard.data.finance && (
                     <>
                       <Stat
@@ -257,6 +266,7 @@ export function DashboardPage() {
                       />
                     </>
                   )}
+                  */}
                 </>
               )}
             </div>
