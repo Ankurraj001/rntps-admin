@@ -100,6 +100,9 @@ function findStudents(
     return Student.aggregate<StudentDoc>(stages);
   }
 
+  // The name tiebreak is what makes a low-cardinality sort useful: ordering by
+  // transportOpted alone would group the roll into two blocks in insertion order, so each
+  // block stays alphabetical.
   const sort: Record<string, 1 | -1> = { [query.sort]: direction };
   if (query.sort !== 'fullName') sort.fullName = 1;
 

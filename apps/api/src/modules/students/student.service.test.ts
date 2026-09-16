@@ -185,6 +185,32 @@ describe('listStudents', () => {
     expect(descending.items.map((s) => s.classCode)).toEqual(['5', '5', 'UKG', 'LKG', 'NURSERY']);
   });
 
+  it('sorts by transport into two blocks, each alphabetical', async () => {
+    await service.createStudent(studentInput({ fullName: 'Ishaan Rao', transportOpted: true }));
+    await service.createStudent(studentInput({ fullName: 'Bhavya Nair', transportOpted: true }));
+
+    // Descending is what the column opens on — the transport users on top.
+    const descending = await service.listStudents(listQuery({ sort: 'transportOpted', order: 'desc' }));
+    expect(descending.items.map((s) => s.fullName)).toEqual([
+      'BHAVYA NAIR',
+      'ISHAAN RAO',
+      'AARAV SHARMA',
+      'DIYA VERMA',
+      'KABIR SINGH',
+    ]);
+
+    // Reversing swaps the blocks; the name tiebreak is fixed, so each block stays A-Z
+    // rather than flipping with it.
+    const ascending = await service.listStudents(listQuery({ sort: 'transportOpted' }));
+    expect(ascending.items.map((s) => s.fullName)).toEqual([
+      'AARAV SHARMA',
+      'DIYA VERMA',
+      'KABIR SINGH',
+      'BHAVYA NAIR',
+      'ISHAAN RAO',
+    ]);
+  });
+
   it('combines the transport filter with the class filter rather than replacing it', async () => {
     await service.createStudent(studentInput({ fullName: 'Ishaan Rao', classCode: '5', transportOpted: true }));
     await service.createStudent(studentInput({ fullName: 'Myra Bose', classCode: 'NURSERY', transportOpted: true }));

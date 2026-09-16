@@ -16,8 +16,23 @@ import { displayPhone, formatDate } from '@/lib/utils';
 
 const PAGE_SIZE = 25;
 
-/** The columns this table offers to sort by; all three are server-side orderings. */
-type SortField = 'fullName' | 'rollNo' | 'classCode';
+/** The columns this table offers to sort by; all four are server-side orderings. */
+type SortField = 'fullName' | 'rollNo' | 'classCode' | 'transportOpted';
+
+/**
+ * The direction a column opens in on its first click.
+ *
+ * The text columns read naturally ascending — A-Z by name, 1-upwards by roll number,
+ * Nursery-upwards by class. Transport is a flag rather than a scale, and a click on it is
+ * asking who takes the bus, so it opens with those students on top; ascending on a boolean
+ * would lead with a screenful of "No".
+ */
+const INITIAL_ORDER: Record<SortField, 'asc' | 'desc'> = {
+  fullName: 'asc',
+  rollNo: 'asc',
+  classCode: 'asc',
+  transportOpted: 'desc',
+};
 
 export function StudentsListPage() {
   const { user } = useAuth();
@@ -78,16 +93,15 @@ export function StudentsListPage() {
     };
   }
 
-  // First click on a column sorts it ascending; clicking the same one again reverses it.
-  // Every column reads naturally ascending — A-Z by name, 1-upwards by roll number, and
-  // Nursery-upwards by class (the API orders classes by the register's order, not the
-  // alphabetical order of the codes).
+  // First click on a column sorts it in the direction that column reads best (see
+  // INITIAL_ORDER); clicking the same one again reverses it. The API orders classes by the
+  // register's order, not the alphabetical order of the codes.
   function toggleSort(field: SortField) {
     if (sort === field) {
       setOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
     } else {
       setSort(field);
-      setOrder('asc');
+      setOrder(INITIAL_ORDER[field]);
     }
     setPage(1);
   }
@@ -205,6 +219,7 @@ export function StudentsListPage() {
                       <th scope="col" className="px-5 py-3 font-medium">DOB</th>
                       <th scope="col" className="px-5 py-3 font-medium">Aadhaar</th>
                       <th scope="col" className="px-5 py-3 font-medium">Primary guardian</th>
+                      <SortableHeader label="Transport" field="transportOpted" sort={sort} order={order} onSort={toggleSort} />
                       <th scope="col" className="px-5 py-3 font-medium">Status</th>
                       {isAdmin && (
                         <th scope="col" className="px-5 py-3 font-medium">
@@ -246,6 +261,7 @@ export function StudentsListPage() {
                               '—'
                             )}
                           </td>
+                          <td className="px-5 py-3 text-slate-600">{student.transportOpted ? 'Yes' : 'No'}</td>
                           <td className="px-5 py-3"><StatusBadge status={student.status} /></td>
                           {isAdmin && (
                             <td className="px-5 py-3 text-right">

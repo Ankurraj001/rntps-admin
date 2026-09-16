@@ -255,7 +255,7 @@ export const listStudentsQuerySchema = paginationSchema.extend({
   familyId: z.string().trim().optional(),
   /** Narrows to students who have opted into school transport. */
   transportOnly: z.coerce.boolean().optional(),
-  sort: z.enum(['fullName', 'rollNo', 'createdAt', 'classCode']).default('fullName'),
+  sort: z.enum(['fullName', 'rollNo', 'createdAt', 'classCode', 'transportOpted']).default('fullName'),
   order: z.enum(['asc', 'desc']).default('asc'),
   /**
    * `csv` swaps the paginated JSON page for a CSV download of every matching row. It has to
