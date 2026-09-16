@@ -109,6 +109,20 @@ export function DateInput({
     onChange(dateKey);
   }
 
+  /**
+   * Drops a half-typed entry once the field is left, so the box shows what was captured.
+   *
+   * An incomplete or impossible entry reports as `''` while it is being typed, which is
+   * correct — but on a field that is allowed to be empty, `''` means "no date". Leaving
+   * "16-09-202" on screen would then claim a date the record does not have, and there is
+   * no error to explain the gap the way a required field's validation once did. Blanking
+   * it is the only outcome the display and the stored value agree on.
+   */
+  function handleBlur() {
+    if (text !== '' && fromDisplayDate(text) === '') setText('');
+    onBlur?.();
+  }
+
   function openPicker(event: MouseEvent<HTMLButtonElement>) {
     // Several of these fields sit inside a <label>, and a click anywhere in a label is
     // forwarded to the control it labels — the text box — which would steal focus back
@@ -141,7 +155,7 @@ export function DateInput({
         maxLength={10}
         value={text}
         onChange={(event) => commit(maskDate(event.target.value))}
-        onBlur={onBlur}
+        onBlur={handleBlur}
         className={cn(
           'h-10 w-full rounded-md border border-slate-300 bg-white py-0 pl-3 pr-10 text-sm text-slate-900',
           'placeholder:text-slate-400 disabled:bg-slate-100 aria-[invalid=true]:border-red-500',

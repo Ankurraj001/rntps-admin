@@ -168,7 +168,7 @@ function ProfileTab({
             <Detail label="Roll number" value={student.rollNo ?? '—'} />
             <Detail
               label="Date of birth"
-              value={`${formatDate(student.dob)} (${ageFrom(student.dob)})`}
+              value={student.dob ? `${formatDate(student.dob)} (${ageFrom(student.dob)})` : '—'}
             />
             <Detail
               label="Gender"
@@ -190,6 +190,8 @@ function ProfileTab({
               label="APAAR ID / PEN"
               value={student.apaarId ? <span className="font-mono">{student.apaarId}</span> : '—'}
             />
+            <Detail label="Religion" value={student.religion || '—'} />
+            <Detail label="Category" value={student.category || '—'} />
             <Detail
               label="Transport"
               value={

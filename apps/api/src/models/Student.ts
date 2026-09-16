@@ -32,15 +32,26 @@ export interface StudentDoc {
   /** The primary key IS the studentId, e.g. "RNTPS-26-001". */
   _id: string;
   fullName: string;
-  dob: string;
+  /** Null when nobody has supplied it yet; a guessed date would read as a recorded one. */
+  dob: string | null;
   gender: Gender;
   classCode: ClassCode;
   rollNo: number | null;
-  admissionDate: string;
+  /** Null when nobody has supplied it yet. */
+  admissionDate: string | null;
   /** Stored in full, digits only. */
   aadhaar: string | null;
   /** APAAR ID / Permanent Education Number. */
   apaarId: string | null;
+  /**
+   * Register fields, free text and often blank.
+   *
+   * No migration backfills them: students onboarded before they existed simply have the
+   * field missing, which `toDto` reads as '' — the same value a blank input saves. That
+   * keeps "not recorded yet" and "cleared by the admin" one state instead of two.
+   */
+  religion: string;
+  category: string;
   status: StudentStatus;
   academicYear: string;
   /** Siblings share this key; it is the whole sibling implementation. */
@@ -83,13 +94,15 @@ const studentSchema = new Schema<StudentDoc>(
   {
     _id: { type: String, required: true, uppercase: true, trim: true },
     fullName: { type: String, required: true, trim: true, maxlength: 80 },
-    dob: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+    dob: { type: String, default: null, match: /^\d{4}-\d{2}-\d{2}$/ },
     gender: { type: String, enum: GENDERS, required: true },
     classCode: { type: String, enum: CLASS_CODES, required: true },
     rollNo: { type: Number, default: null, min: 1, max: 999 },
-    admissionDate: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+    admissionDate: { type: String, default: null, match: /^\d{4}-\d{2}-\d{2}$/ },
     aadhaar: { type: String, default: null, match: /^\d{12}$/ },
     apaarId: { type: String, default: null, uppercase: true, trim: true },
+    religion: { type: String, default: '', uppercase: true, trim: true, maxlength: 40 },
+    category: { type: String, default: '', uppercase: true, trim: true, maxlength: 40 },
     status: { type: String, enum: STUDENT_STATUSES, default: 'ACTIVE', required: true },
     academicYear: { type: String, required: true },
     familyId: { type: String, required: true },

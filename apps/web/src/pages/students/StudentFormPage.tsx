@@ -6,7 +6,6 @@ import {
   classLabel,
   createStudentSchema,
   formatINR,
-  toDateKey,
   type CreateStudentInput,
   type SiblingDto,
 } from '@rntps/shared';
@@ -41,9 +40,11 @@ function blankStudent(): CreateStudentInput {
     gender: 'MALE',
     classCode: '1',
     rollNo: null,
-    admissionDate: toDateKey(),
+    admissionDate: '',
     aadhaar: '',
     apaarId: '',
+    religion: '',
+    category: '',
     guardians: [{ ...EMPTY_GUARDIAN }],
     address: { line1: '', line2: '', city: '', state: '', pincode: '' },
     transportOpted: false,
@@ -106,13 +107,15 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
     const student = existing.data;
     form.reset({
       fullName: student.fullName,
-      dob: student.dob,
+      dob: student.dob ?? '',
       gender: student.gender,
       classCode: student.classCode,
       rollNo: student.rollNo,
-      admissionDate: student.admissionDate,
+      admissionDate: student.admissionDate ?? '',
       aadhaar: student.aadhaar ?? '',
       apaarId: student.apaarId ?? '',
+      religion: student.religion,
+      category: student.category,
       guardians: student.guardians.map((g) => ({ ...g, phone: toLocalPhone(g.phone) })),
       address: student.address,
       transportOpted: student.transportOpted,
@@ -171,14 +174,20 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
     },
   });
 
-  /** Keeps "Save & add another" fast: same class and family, empty child details. */
+  /**
+   * Keeps "Save & add another" fast: same class and family, empty child details.
+   *
+   * The dates are not carried over. Repeating the previous child's admission date would
+   * put a date on the next record that nobody typed for it, which is the same problem as
+   * defaulting the field to today — and the one case it saved typing, a batch intake all
+   * admitted on one day, is not worth a wrong date on the ones that were not.
+   */
   function resetForNextChild() {
     const previous = form.getValues();
     setJustSaved(null);
     form.reset({
       ...blankStudent(),
       classCode: previous.classCode,
-      admissionDate: previous.admissionDate,
       ...(sibling ? { guardians: previous.guardians, address: previous.address } : {}),
     });
   }
@@ -263,7 +272,12 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
               />
             </Field>
 
-            <Field label="Date of birth" htmlFor="dob" required error={errors.dob?.message}>
+            <Field
+              label="Date of birth"
+              htmlFor="dob"
+              error={errors.dob?.message}
+              hint="Optional — leave blank and fill it in when the certificate arrives"
+            >
               <Controller
                 control={form.control}
                 name="dob"
@@ -271,7 +285,9 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
                   <DateInput
                     id="dob"
                     name={field.name}
-                    value={field.value ?? ''}
+                    // `optionalText` widens the field's input type to unknown, so the
+                    // string this control needs is narrowed rather than asserted.
+                    value={typeof field.value === 'string' ? field.value : ''}
                     onChange={field.onChange}
                     onBlur={field.onBlur}
                     aria-invalid={errors.dob ? true : undefined}
@@ -310,7 +326,12 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
               />
             </Field>
 
-            <Field label="Admission date" htmlFor="admissionDate" required error={errors.admissionDate?.message}>
+            <Field
+              label="Admission date"
+              htmlFor="admissionDate"
+              error={errors.admissionDate?.message}
+              hint="Optional — leave blank if the date is not known"
+            >
               <Controller
                 control={form.control}
                 name="admissionDate"
@@ -318,12 +339,32 @@ export function StudentFormPage({ mode }: { mode: 'create' | 'edit' }) {
                   <DateInput
                     id="admissionDate"
                     name={field.name}
-                    value={field.value ?? ''}
+                    value={typeof field.value === 'string' ? field.value : ''}
                     onChange={field.onChange}
                     onBlur={field.onBlur}
                     aria-invalid={errors.admissionDate ? true : undefined}
                   />
                 )}
+              />
+            </Field>
+
+            {/* Free text, and blank for every student on the roll before these existed —
+                so no placeholder that reads like a required choice. */}
+            <Field label="Religion" htmlFor="religion" error={errors.religion?.message} hint="Optional">
+              <Input
+                id="religion"
+                className="uppercase placeholder:normal-case"
+                placeholder="e.g. Hindu"
+                {...form.register('religion')}
+              />
+            </Field>
+
+            <Field label="Category" htmlFor="category" error={errors.category?.message} hint="Optional — e.g. General, OBC, SC, ST">
+              <Input
+                id="category"
+                className="uppercase placeholder:normal-case"
+                placeholder="e.g. General"
+                {...form.register('category')}
               />
             </Field>
 

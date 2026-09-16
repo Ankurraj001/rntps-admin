@@ -350,6 +350,27 @@ Emptying an identifier on edit *clears* it, rather than leaving the old value in
 because these fields are unique: a number entered against the wrong student would otherwise
 permanently block the student it actually belongs to.
 
+**Date of birth and admission date are both optional.** They were required until it became
+clear what that cost at the desk: a child arrives before anyone can find the birth certificate, and a
+required field leaves the admin either turning the family away or typing a placeholder — and a guessed
+date is worse than no date, because it reads as recorded. Null says plainly that nobody has supplied
+it yet, and the table, the record and the CSV all show it as blank so it is visible as work still to
+do. The onboarding form starts both fields empty rather than pre-filling today's date, for the same
+reason: a default that is usually right is still a guess, and a guess nobody typed is the hardest kind
+to spot later. A supplied date is still validated, the two are still ordered against each other whenever *both*
+are present, and emptying either one on edit clears it. Nothing else in the system reads these dates,
+so an absent one cannot affect fees, attendance or promotion — only the age shown on the profile,
+which falls back to a dash.
+
+**Religion** and **category** are free text, optional, and stored upper case. They are register
+fields rather than app concepts: the values a UDISE+ return or a scholarship form asks for are not a
+closed list, so an unfamiliar answer is accepted rather than rejected — leaving the cell blank because
+the app disagreed with the paperwork is the worse outcome. Upper-casing is the same rule names follow,
+so "obc", "OBC" and "Obc" appear in the directory as one category. There is no backfill: every student
+already on the roll reads as blank in the table, on the record and in the CSV, and an admin fills each
+one in as the paperwork reaches them. Unlike the identifiers above they are not unique, so a blank
+input simply stores a blank — "not recorded yet" and "cleared" are deliberately one state.
+
 Aadhaar is stored and displayed in full, by choice. UIDAI's guidance is to mask to the last four
 digits outside authentication contexts; `maskAadhaar()` in `packages/shared/src/identifiers.ts` is
 there if you want to switch display over later.

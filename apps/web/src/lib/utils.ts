@@ -12,8 +12,13 @@ export function displayPhone(stored: string): string {
   return local.replace(/(\d{5})(\d{5})/, '$1 $2');
 }
 
-/** Renders a dateKey the way the school writes dates: "2026-09-16" -> "16-09-2026". */
-export function formatDate(dateKey: string): string {
+/**
+ * Renders a dateKey the way the school writes dates: "2026-09-16" -> "16-09-2026".
+ *
+ * Accepts null because a student's date of birth and admission date are optional, and
+ * "not recorded" is shown the same way an empty string always was.
+ */
+export function formatDate(dateKey: string | null | undefined): string {
   if (!dateKey) return '—';
   const [y, m, d] = dateKey.split('-');
   if (!y || !m || !d) return dateKey;

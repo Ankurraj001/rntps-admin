@@ -26,13 +26,17 @@ export function toDto(doc: StudentDoc): StudentDto {
   return {
     studentId: doc._id,
     fullName: doc.fullName,
-    dob: doc.dob,
+    dob: doc.dob ?? null,
     gender: doc.gender,
     classCode: doc.classCode,
     rollNo: doc.rollNo,
-    admissionDate: doc.admissionDate,
+    admissionDate: doc.admissionDate ?? null,
     aadhaar: doc.aadhaar,
     apaarId: doc.apaarId,
+    // Students onboarded before these fields existed have no such key on the document,
+    // so the DTO reports them as blank rather than undefined.
+    religion: doc.religion ?? '',
+    category: doc.category ?? '',
     status: doc.status,
     academicYear: doc.academicYear,
     familyId: doc.familyId,
@@ -227,13 +231,15 @@ export async function createStudent(
 
   const base = {
     fullName: payload.fullName,
-    dob: payload.dob,
+    dob: payload.dob ?? null,
     gender: payload.gender,
     classCode: payload.classCode,
     rollNo: payload.rollNo,
-    admissionDate: payload.admissionDate,
+    admissionDate: payload.admissionDate ?? null,
     aadhaar: payload.aadhaar ?? null,
     apaarId: payload.apaarId ?? null,
+    religion: payload.religion,
+    category: payload.category,
     status: 'ACTIVE' as const,
     academicYear: settings.activeAcademicYear,
     familyId,
@@ -282,9 +288,14 @@ export async function updateStudent(
       .lean<Pick<StudentDoc, 'dob' | 'admissionDate'>>();
     if (!current) throw AppError.notFound(`No student found with ID ${studentId}`);
 
-    const dob = payload.dob ?? current.dob;
-    const admissionDate = payload.admissionDate ?? current.admissionDate;
-    if (dob >= admissionDate) {
+    // `undefined` means the caller said nothing about the field, so the stored value
+    // stands; `null` means they cleared it. Coalescing the two — `payload.dob ?? current.dob`
+    // — would compare a date the admin has just deleted and reject a legitimate edit.
+    const dob = payload.dob === undefined ? current.dob : payload.dob;
+    const admissionDate =
+      payload.admissionDate === undefined ? current.admissionDate : payload.admissionDate;
+    // One date alone cannot be out of order, and neither can no dates.
+    if (dob && admissionDate && dob >= admissionDate) {
       throw AppError.badRequest('Date of birth must be before the admission date', [
         { field: 'dob', message: 'Date of birth must be before the admission date' },
       ]);

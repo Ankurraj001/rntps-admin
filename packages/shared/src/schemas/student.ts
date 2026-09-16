@@ -28,6 +28,19 @@ const dateKeyField = z
   .describe('YYYY-MM-DD');
 
 /**
+ * A student's date of birth and date of admission are both optional.
+ *
+ * They used to be required, which meant a child standing at the desk could not be put on
+ * the roll until someone found the birth certificate — so the admin either waited or typed
+ * a placeholder date, and a guessed date is worse than no date at all: it looks recorded.
+ * Null says plainly that nobody has supplied it yet.
+ *
+ * Still validated when given, and still ordered against each other when *both* are given
+ * (see the superRefines below) — optional means "may be absent", not "may be nonsense".
+ */
+const optionalDateKeyField = () => optionalText(dateKeyField);
+
+/**
  * People's names are stored upper case.
  *
  * The school's registers, TCs and fee slips are all written that way by hand, and an admin
@@ -37,6 +50,20 @@ const dateKeyField = z
  */
 const personNameField = (message: string) =>
   z.string().trim().toUpperCase().min(2, message).max(80);
+
+/**
+ * Religion and social category, as the school register records them.
+ *
+ * Free text rather than an enum on purpose: the values a school has to write on a UDISE+
+ * return or a scholarship form are not a closed list the app can know in advance, and
+ * rejecting a legitimate one an admin has been told to enter would leave the record blank
+ * instead of merely untidy. Upper-cased for the same reason names are — "obc", "OBC" and
+ * "Obc" are one category, and the directory should not show them as three.
+ *
+ * Blank is a real value: every student already on the roll has one, and the admin fills
+ * it in as the paperwork reaches them.
+ */
+const registerTextField = () => z.string().trim().toUpperCase().max(40).default('');
 
 export const guardianSchema = z.object({
   name: personNameField('Guardian name is required'),
@@ -116,11 +143,13 @@ export const createStudentSchema = z
         .regex(/^[A-Z0-9][A-Z0-9-]{2,29}$/, 'Use letters, digits and hyphens (3-30 characters)'),
     ),
     fullName: personNameField('Full name is required'),
-    dob: dateKeyField,
+    /** Optional — see `optionalDateKeyField`. */
+    dob: optionalDateKeyField(),
     gender: z.enum(GENDERS),
     classCode: z.enum(CLASS_CODES),
     rollNo: z.number().int().min(1).max(999).nullable().default(null),
-    admissionDate: dateKeyField,
+    /** Optional — see `optionalDateKeyField`. */
+    admissionDate: optionalDateKeyField(),
     /**
      * Aadhaar. Validated against its Verhoeff check digit, which catches every
      * single-digit typo and every transposition of adjacent digits — both common when
@@ -143,6 +172,10 @@ export const createStudentSchema = z
         .transform(normaliseApaarId)
         .refine(isValidApaarId, 'Use 8 to 20 letters or digits'),
     ),
+    /** e.g. HINDU, MUSLIM, CHRISTIAN, SIKH. Optional — see `registerTextField`. */
+    religion: registerTextField(),
+    /** Social category as the state writes it, e.g. GENERAL, OBC, SC, ST, EWS. Optional. */
+    category: registerTextField(),
     /**
      * When set, the new student joins this student's family: they inherit the same
      * familyId instead of getting a new one. This is how siblings are linked.
@@ -166,7 +199,8 @@ export const createStudentSchema = z
     notes: z.string().trim().max(1000).default(''),
   })
   .superRefine((student, ctx) => {
-    if (student.dob >= student.admissionDate) {
+    // Only orderable when the admin has supplied both; one date on its own is not wrong.
+    if (student.dob && student.admissionDate && student.dob >= student.admissionDate) {
       ctx.addIssue({
         code: 'custom',
         path: ['dob'],
@@ -225,6 +259,12 @@ export const updateStudentSchema = createStudentSchema
         .transform(normaliseApaarId)
         .refine(isValidApaarId, 'Use 8 to 20 letters or digits'),
     ),
+    // Clearable for the same reason the identifiers are: a date typed against the wrong
+    // student, or a placeholder inherited from a paper form, has to be removable — and
+    // with these fields optional, blank is a legitimate stored value rather than an
+    // omission to be ignored.
+    dob: clearableText(dateKeyField),
+    admissionDate: clearableText(dateKeyField),
     // Explicitly nullable so an override can be removed and the class default restored.
     transportFareOverrideRupees: z.number().int().min(0).max(1_000_000).nullable().optional(),
   })
@@ -285,13 +325,18 @@ export type Concession = z.output<typeof concessionSchema>;
 export interface StudentDto {
   studentId: string;
   fullName: string;
-  dob: string;
+  /** Null until someone supplies it — see `optionalDateKeyField`. */
+  dob: string | null;
   gender: (typeof GENDERS)[number];
   classCode: (typeof CLASS_CODES)[number];
   rollNo: number | null;
-  admissionDate: string;
+  /** Null until someone supplies it — see `optionalDateKeyField`. */
+  admissionDate: string | null;
   aadhaar: string | null;
   apaarId: string | null;
+  /** '' for every student onboarded before these fields existed. */
+  religion: string;
+  category: string;
   status: (typeof STUDENT_STATUSES)[number];
   academicYear: string;
   familyId: string;

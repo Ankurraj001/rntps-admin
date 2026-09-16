@@ -263,6 +263,12 @@ export function StudentsListPage() {
                         Aadhaar
                       </th>
                       <th scope="col" className="px-5 py-3 font-medium">
+                        Religion
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Category
+                      </th>
+                      <th scope="col" className="px-5 py-3 font-medium">
                         Primary guardian
                       </th>
                       <SortableHeader
@@ -314,6 +320,10 @@ export function StudentsListPage() {
                           <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-slate-600">
                             {student.aadhaar ? formatAadhaar(student.aadhaar) : '—'}
                           </td>
+                          {/* Blank on every record onboarded before these fields existed;
+                              the dash is the prompt for an admin to fill it in. */}
+                          <td className="px-5 py-3 text-slate-600">{student.religion || '—'}</td>
+                          <td className="px-5 py-3 text-slate-600">{student.category || '—'}</td>
                           <td className="px-5 py-3 text-slate-600">
                             {primary ? (
                               <>
