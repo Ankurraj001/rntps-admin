@@ -17,6 +17,7 @@ import {
   type NotificationItemStatus,
 } from '@rntps/shared';
 import { AppError } from '../../lib/AppError.js';
+import { pickReachableGuardian } from '../../lib/guardian.js';
 import { istMonthInstants } from '../../lib/dateRange.js';
 import { getSettings } from '../../lib/ids.js';
 import { Invoice, type InvoiceDoc } from '../../models/Invoice.js';
@@ -311,16 +312,7 @@ export async function buildInvoiceWaLink(invoiceId: string): Promise<InvoiceWaLi
     .lean<Pick<StudentDoc, 'guardians'>>();
   if (!student) throw AppError.notFound(`No student found with ID ${invoice.studentId}`);
 
-  const guardian =
-    student.guardians.find((g) => g.isPrimary && !g.whatsappOptOut) ??
-    student.guardians.find((g) => !g.whatsappOptOut);
-  if (!guardian) {
-    throw AppError.badRequest(
-      student.guardians.length === 0
-        ? 'No guardian on record for this student'
-        : 'Every guardian on record has opted out of WhatsApp',
-    );
-  }
+  const guardian = pickReachableGuardian(student.guardians);
 
   // Everything still owed on this student's other invoices, rolled into one row — the
   // same "Previous dues" convention createBatch and the printed fee slip both follow, so a

@@ -13,3 +13,4 @@ export * from './schemas/notifications.js';
 export * from './schemas/passwordReset.js';
 export * from './schemas/academics.js';
 export * from './feeMessage.js';
+export * from './reportCardMessage.js';

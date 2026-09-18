@@ -2,6 +2,8 @@ import { createBrowserRouter } from 'react-router-dom';
 import { RequireAuth, RequireRole } from '@/auth/RouteGuards';
 import { AppShell } from '@/components/layout/AppShell';
 import { AcademicsPage } from '@/pages/academics/AcademicsPage';
+import { ClassReportCardsPage } from '@/pages/academics/ClassReportCardsPage';
+import { ReportCardPage } from '@/pages/academics/ReportCardPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { MarkAttendancePage } from '@/pages/attendance/MarkAttendancePage';
 import { FeeStructuresPage } from '@/pages/fees/FeeStructuresPage';
@@ -56,6 +58,9 @@ export const router = createBrowserRouter([
       { path: 'students/:studentId', element: <StudentDetailPage /> },
       { path: 'students/:studentId/edit', element: adminOnly(<StudentFormPage mode="edit" />) },
       { path: 'academics', element: <AcademicsPage /> },
+      // Readable by a teacher too: they hand out their own class's cards.
+      { path: 'academics/report-card/:studentId/:academicYear', element: <ReportCardPage /> },
+      { path: 'academics/report-cards/:academicYear', element: <ClassReportCardsPage /> },
       { path: 'attendance', element: <MarkAttendancePage /> },
       { path: 'attendance/monthly', element: <MonthlyAttendancePage /> },
       { path: 'fees/structures', element: adminOnly(<FeeStructuresPage />) },

@@ -1,21 +1,41 @@
 import {
+  EXAM_CODES,
+  SUBJECT_LABELS,
+  classLabel,
+  GRADED_SUBJECT_CODES,
+  buildCompactReportCardMessage,
+  buildReportCardMessage,
+  buildWaLink,
   emptyScores,
+  emptySubjectGrades,
+  emptySubjectMarks,
+  examTotal,
+  hasAnySubjectMark,
+  subjectsForClass,
   type AcademicRow,
   type AcademicYearsResponse,
   type ClassCode,
   type ExamScores,
+  type ExamSubjectGrades,
+  type ExamSubjectMarks,
+  type ExamCode,
   type ListAcademicsQuery,
+  type ReportCardScope,
+  type ReportCardWaLinkDto,
   type Paginated,
   type SaveExamResultPayload,
   type StudentAcademicsResponse,
   type StudentExamYear,
+  type SubjectCode,
 } from '@rntps/shared';
+import { hasPaperContent, waUrlFits } from '@rntps/shared';
 import { AppError } from '../../lib/AppError.js';
+import { cardGuardianOf, pickReachableGuardian } from '../../lib/guardian.js';
 import { getSettings } from '../../lib/ids.js';
 import { ExamResult, examResultId, type ExamResultDoc } from '../../models/ExamResult.js';
 import { Student, type StudentDoc } from '../../models/Student.js';
 
-type RosterStudent = Pick<StudentDoc, '_id' | 'fullName' | 'classCode' | 'rollNo'>;
+type RosterStudent = Pick<StudentDoc, '_id' | 'fullName' | 'classCode' | 'rollNo' | 'guardians'>;
 
 /** The caller, as far as this module is concerned: a role and the classes they may touch. */
 export interface Actor {
@@ -40,6 +60,43 @@ function toScores(scores: ExamScores | undefined): ExamScores {
     UT4: scores.UT4 ?? null,
     FINAL: scores.FINAL ?? null,
   };
+}
+
+/**
+ * The same flattening for subject marks, plus one thing toScores does not have to do:
+ * a record written before subject-wise entry has no `subjectMarks` at all, and a `.lean()`
+ * read does not apply the model's defaults, so it arrives as undefined rather than blank.
+ */
+function toSubjectMarks(marks: ExamSubjectMarks | undefined): ExamSubjectMarks {
+  const blank = emptySubjectMarks();
+  if (!marks) return blank;
+
+  for (const exam of EXAM_CODES) {
+    const paper = marks[exam];
+    if (!paper) continue;
+    for (const subject of Object.keys(blank[exam]) as SubjectCode[]) {
+      blank[exam][subject] = paper[subject] ?? null;
+    }
+  }
+  return blank;
+}
+
+/**
+ * The same again for grades. Every class is graded on all three subjects, so unlike marks
+ * there is no per-class list to project against.
+ */
+function toSubjectGrades(grades: ExamSubjectGrades | undefined): ExamSubjectGrades {
+  const blank = emptySubjectGrades();
+  if (!grades) return blank;
+
+  for (const exam of EXAM_CODES) {
+    const paper = grades[exam];
+    if (!paper) continue;
+    for (const subject of GRADED_SUBJECT_CODES) {
+      blank[exam][subject] = paper[subject] ?? null;
+    }
+  }
+  return blank;
 }
 
 /**
@@ -112,12 +169,23 @@ export async function listAcademics(
   const settings = await getSettings();
   const academicYear = query.academicYear ?? settings.activeAcademicYear;
 
-  const [students, records] = await Promise.all([
-    Student.find({ academicYear, status: 'ACTIVE' })
-      .select('fullName classCode rollNo')
-      .lean<RosterStudent[]>(),
-    ExamResult.find({ academicYear }).lean<ExamResultDoc[]>(),
-  ]);
+  /*
+    Sequential rather than parallel, because the second query needs the first's ids.
+
+    The union has to include students who are *not* on this session's roll but do have a
+    record for it — the promoted and the departed — or a card printed for a closed session
+    would have no guardian to name on it. The snapshots on the record carry the class and
+    roll, but a guardian was never snapshotted and is read live.
+
+    One session is a few hundred lean documents in a single school, so the extra round trip
+    costs nothing worth restructuring for.
+  */
+  const records = await ExamResult.find({ academicYear }).lean<ExamResultDoc[]>();
+  const students = await Student.find({
+    $or: [{ academicYear, status: 'ACTIVE' }, { _id: { $in: records.map((r) => r.studentId) } }],
+  })
+    .select('fullName classCode rollNo guardians')
+    .lean<RosterStudent[]>();
 
   const byStudent = new Map<string, AcademicRow>();
 
@@ -129,10 +197,15 @@ export async function listAcademics(
       rollNo: student.rollNo,
       academicYear,
       scores: emptyScores(),
+      subjectMarks: emptySubjectMarks(),
+      subjectGrades: emptySubjectGrades(),
+      guardian: cardGuardianOf(student.guardians),
       hasRecord: false,
       updatedAt: null,
     });
   }
+
+  const guardianById = new Map(students.map((s) => [s._id, cardGuardianOf(s.guardians)]));
 
   for (const record of records) {
     const enrolled = byStudent.get(record.studentId);
@@ -145,6 +218,9 @@ export async function listAcademics(
       rollNo: record.rollNoSnapshot,
       academicYear,
       scores: toScores(record.scores),
+      subjectMarks: toSubjectMarks(record.subjectMarks),
+      subjectGrades: toSubjectGrades(record.subjectGrades),
+      guardian: guardianById.get(record.studentId) ?? null,
       hasRecord: true,
       updatedAt: record.updatedAt?.toISOString() ?? null,
     });
@@ -181,7 +257,9 @@ export async function listAcademics(
 /** Every session on record for one student, newest first. */
 export async function getStudentAcademics(studentId: string): Promise<StudentAcademicsResponse> {
   const id = studentId.toUpperCase();
-  const student = await Student.findById(id).select('_id').lean<Pick<StudentDoc, '_id'>>();
+  const student = await Student.findById(id)
+    .select('_id fullName guardians')
+    .lean<Pick<StudentDoc, '_id' | 'fullName' | 'guardians'>>();
   if (!student) throw AppError.notFound(`No student found with ID ${studentId}`);
 
   const records = await ExamResult.find({ studentId: id })
@@ -193,10 +271,17 @@ export async function getStudentAcademics(studentId: string): Promise<StudentAca
     classCode: record.classCodeSnapshot,
     rollNo: record.rollNoSnapshot,
     scores: toScores(record.scores),
+    subjectMarks: toSubjectMarks(record.subjectMarks),
+    subjectGrades: toSubjectGrades(record.subjectGrades),
     updatedAt: record.updatedAt?.toISOString() ?? null,
   }));
 
-  return { studentId: id, years };
+  return {
+    studentId: id,
+    fullName: student.fullName,
+    guardian: cardGuardianOf(student.guardians),
+    years,
+  };
 }
 
 /**
@@ -208,6 +293,72 @@ export async function listAcademicYears(): Promise<AcademicYearsResponse> {
   const stored = await ExamResult.distinct('academicYear');
   const years = [...new Set([...(stored as string[]), settings.activeAcademicYear])].sort().reverse();
   return { years, activeAcademicYear: settings.activeAcademicYear };
+}
+
+/**
+ * Rejects marks for subjects the class is not taught.
+ *
+ * Every save carries all eight subjects — the schema defaults the ones the form did not
+ * render to null — so only a *non-null* mark for an out-of-list subject is an error.
+ * Checking for presence instead would 400 every single save.
+ *
+ * Reported in the `{field, message}` shape `validate()` produces, so the edit dialog
+ * highlights the offending input through the same mapper it uses for a zod error rather
+ * than needing a special case for this one rule.
+ */
+function assertSubjectsMatchClass(subjectMarks: ExamSubjectMarks, classCode: ClassCode): void {
+  const taught = new Set<SubjectCode>(subjectsForClass(classCode));
+  const details: { field: string; message: string }[] = [];
+
+  for (const exam of EXAM_CODES) {
+    const paper = subjectMarks[exam];
+    for (const [subject, mark] of Object.entries(paper) as [SubjectCode, number | null][]) {
+      if (mark === null || taught.has(subject)) continue;
+      details.push({
+        field: `subjectMarks.${exam}.${subject}`,
+        message: `${SUBJECT_LABELS[subject]} is not taught in ${classLabel(classCode)}`,
+      });
+    }
+  }
+
+  if (details.length > 0) {
+    throw AppError.badRequest('Please correct the highlighted fields', details);
+  }
+}
+
+/**
+ * Works out the percentage for each paper.
+ *
+ * One rule: **once an exam has subject marks, its percentage is derived from subject marks
+ * from then on; until then it keeps whatever percentage was already stored.**
+ *
+ * The second half is only there for records written before subject-wise entry, which hold
+ * a percentage and nothing else. Without it, saving UT-2 on such a card would blank every
+ * other paper on it, because there are no subject marks to re-derive them from.
+ *
+ * The first half is what stops that fallback becoming a trap. An exam whose stored marks
+ * have all just been deleted is *still* subject-based, so it derives to null — the
+ * clearing sticks. Were the rule written on the stored percentage alone, those two cases
+ * would be indistinguishable and a mark could never be taken back off a card.
+ */
+function deriveScores(
+  subjectMarks: ExamSubjectMarks,
+  existing: ExamResultDoc | null,
+  classCode: ClassCode,
+): ExamScores {
+  const scores = emptyScores();
+
+  for (const exam of EXAM_CODES) {
+    const subjectBased =
+      hasAnySubjectMark(subjectMarks[exam], classCode) ||
+      hasAnySubjectMark(existing?.subjectMarks?.[exam], classCode);
+
+    scores[exam] = subjectBased
+      ? (examTotal(subjectMarks[exam], classCode, exam)?.percent ?? null)
+      : (existing?.scores?.[exam] ?? null);
+  }
+
+  return scores;
 }
 
 /**
@@ -228,6 +379,9 @@ export async function listAcademicYears(): Promise<AcademicYearsResponse> {
  * so rather than guessing one and filing the marks under the wrong class, it is refused.
  * An existing card stays correctable in any session, which is what makes a genuine
  * mistake in a closed year fixable.
+ *
+ * That same class decides which subjects may be marked, and the percentages are derived
+ * here rather than accepted from the caller — see `deriveScores` below.
  */
 export async function saveExamResult(
   payload: SaveExamResultPayload,
@@ -237,7 +391,7 @@ export async function saveExamResult(
 
   const [student, existing] = await Promise.all([
     Student.findById(payload.studentId)
-      .select('fullName classCode rollNo')
+      .select('fullName classCode rollNo guardians')
       .lean<RosterStudent>(),
     ExamResult.findById(examResultId(payload.studentId, payload.academicYear)).lean<ExamResultDoc>(),
   ]);
@@ -256,12 +410,21 @@ export async function saveExamResult(
     throw AppError.forbidden(`You are not assigned to ${classCode}`);
   }
 
+  assertSubjectsMatchClass(payload.subjectMarks, classCode);
+  const scores = deriveScores(payload.subjectMarks, existing, classCode);
+
   const rollNo = existing ? existing.rollNoSnapshot : student.rollNo;
 
   await ExamResult.updateOne(
     { _id: examResultId(payload.studentId, payload.academicYear) },
     {
-      $set: { scores: payload.scores, updatedBy: actor.id },
+      // A whole-object $set rather than a merge, so deleting a mark deletes it.
+      $set: {
+        subjectMarks: payload.subjectMarks,
+        subjectGrades: payload.subjectGrades,
+        scores,
+        updatedBy: actor.id,
+      },
       // Written once. A later correction must not rewrite the class a student sat in.
       $setOnInsert: {
         studentId: payload.studentId,
@@ -280,8 +443,83 @@ export async function saveExamResult(
     classCode,
     rollNo,
     academicYear: payload.academicYear,
-    scores: payload.scores,
+    scores,
+    subjectMarks: payload.subjectMarks,
+    subjectGrades: payload.subjectGrades,
+    guardian: cardGuardianOf(student.guardians),
     hasRecord: true,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * A wa.me link carrying one student's report card for one session.
+ *
+ * The same shape as the invoice equivalent in `notifications.service`: the guardian, the
+ * template and the length fitting are all decided server-side, so the browser only opens
+ * the URL it is handed.
+ *
+ * Confined by class the way saving marks is, not left open the way reading a student's
+ * history is. Reading a record is an internal act; sending a parent a message is not, and
+ * a teacher should only be able to do it for the classes they teach. The class comes from
+ * the stored snapshot, never from the request.
+ */
+export async function buildReportCardWaLink(
+  studentId: string,
+  academicYear: string,
+  actor: Actor,
+  exam?: ExamCode,
+): Promise<ReportCardWaLinkDto> {
+  const id = studentId.toUpperCase();
+
+  const [settings, student, record] = await Promise.all([
+    getSettings(),
+    Student.findById(id).select('fullName guardians').lean<Pick<StudentDoc, '_id' | 'fullName' | 'guardians'>>(),
+    ExamResult.findById(examResultId(id, academicYear)).lean<ExamResultDoc>(),
+  ]);
+
+  if (!student) throw AppError.notFound(`No student found with ID ${studentId}`);
+  if (!record) {
+    throw AppError.badRequest(`No marks are on record for ${student.fullName} in ${academicYear}`);
+  }
+
+  if (actor.role !== 'ADMIN' && !actor.classes.includes(record.classCodeSnapshot)) {
+    throw AppError.forbidden(`You are not assigned to ${record.classCodeSnapshot}`);
+  }
+
+  const guardian = pickReachableGuardian(student.guardians);
+
+  const input = {
+    schoolName: settings.schoolName,
+    schoolAddress: settings.schoolAddress,
+    // The current name, like the gradebook: a child renamed since still gets their card.
+    fullName: student.fullName,
+    // Named on the message exactly as on the printed card.
+    guardian: cardGuardianOf(student.guardians),
+    classCode: record.classCodeSnapshot,
+    rollNo: record.rollNoSnapshot,
+    academicYear,
+    subjectMarks: toSubjectMarks(record.subjectMarks),
+    subjectGrades: toSubjectGrades(record.subjectGrades),
+    scores: toScores(record.scores),
+  };
+
+  // A class-8 card with every paper and every subject overflows the URL once encoded, so
+  // the breakdown is dropped rather than the tail of the message — which is where the
+  // final exam sits.
+  const scope: ReportCardScope = exam ?? null;
+  if (scope !== null && !hasPaperContent(input, scope)) {
+    throw AppError.badRequest(`Nothing is recorded for ${scope} in ${academicYear}`);
+  }
+
+  const full = buildReportCardMessage(input, scope);
+  const compact = !waUrlFits(guardian.phone, full);
+  const message = compact ? buildCompactReportCardMessage(input, scope) : full;
+
+  return {
+    guardianName: guardian.name,
+    guardianPhone: guardian.phone,
+    waLink: buildWaLink(guardian.phone, message),
+    compact,
   };
 }

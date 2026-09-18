@@ -2,16 +2,21 @@ import {
   CLASS_CODES,
   EXAM_CODES,
   EXAM_LABELS,
+  MAX_SUBJECT_MARK,
   classLabel,
+  examTotal,
+  subjectsForClass,
   type AcademicRow,
   type ExamCode,
 } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Printer, Search } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { academicKeys, academicsApi, type AcademicsListParams } from '@/api/academics';
 import { useCurrentUser } from '@/auth/AuthProvider';
 import { EditMarksModal } from '@/components/academics/EditMarksModal';
+import { PrintResultsModal } from '@/components/academics/PrintResultsModal';
 import { PageHeader } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -28,6 +33,23 @@ function formatMark(mark: number | null): string {
   return mark === null ? '—' : `${mark.toFixed(2)}%`;
 }
 
+/**
+ * What is behind the percentage, on hover.
+ *
+ * A percentage counts only the subjects that were marked, so a child with one paper back
+ * can sit at 100% and top the column. The number is correct and the sort is correct; what
+ * is missing is that it is one paper out of six. This is the cheapest place to say so
+ * without giving the table a second line per cell.
+ */
+function describeMarks(row: AcademicRow, exam: ExamCode): string | undefined {
+  const total = examTotal(row.subjectMarks[exam], row.classCode, exam);
+  if (!total) return undefined;
+
+  const sat = total.max / MAX_SUBJECT_MARK[exam];
+  const outOf = subjectsForClass(row.classCode).length;
+  return `${total.obtained} of ${total.max} · ${sat} of ${outOf} subjects marked`;
+}
+
 export function AcademicsPage() {
   const me = useCurrentUser();
   const isAdmin = me.role === 'ADMIN';
@@ -42,6 +64,7 @@ export function AcademicsPage() {
   const [order, setOrder] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   const debouncedSearch = useDebounced(search);
 
@@ -149,6 +172,11 @@ export function AcademicsPage() {
                   </option>
                 ))}
             </Select>
+
+            <Button variant="secondary" onClick={() => setPrinting(true)}>
+              <Printer className="h-4 w-4" aria-hidden />
+              Print results
+            </Button>
           </div>
         </Card>
 
@@ -253,6 +281,16 @@ export function AcademicsPage() {
       </div>
 
       {editing && <EditMarksModal row={editing} onClose={() => setEditingStudentId(null)} />}
+
+      {printing && (
+        <PrintResultsModal
+          classes={myClasses}
+          // Whatever session the gradebook is showing, resolved so the dialog can state it.
+          academicYear={academicYear || (years.data?.activeAcademicYear ?? '')}
+          defaultClassCode={classCode}
+          onClose={() => setPrinting(false)}
+        />
+      )}
     </>
   );
 }
@@ -279,17 +317,31 @@ function MarksRow({
               ? 'px-5 py-3 text-right text-slate-400'
               : 'px-5 py-3 text-right tabular-nums text-slate-700'
           }
+          title={describeMarks(row, code)}
         >
           {formatMark(row.scores[code])}
         </td>
       ))}
-      <td className="px-5 py-3 text-right">
-        {canEdit && (
-          <Button variant="ghost" size="sm" onClick={onEdit}>
-            <Pencil className="h-4 w-4" aria-hidden />
-            Edit
-          </Button>
-        )}
+      <td className="px-5 py-3">
+        <div className="flex items-center justify-end gap-1">
+          {/* Nothing to print until a paper has been marked. Sending lives on the card
+              itself, where the paper being sent is the one on screen. */}
+          {row.hasRecord && (
+            <Link
+              to={`/academics/report-card/${encodeURIComponent(row.studentId)}/${encodeURIComponent(row.academicYear)}`}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              aria-label={`Open ${row.fullName}'s report card`}
+              title="Report card"
+            >
+              <Printer className="h-4 w-4" aria-hidden />
+            </Link>
+          )}
+          {canEdit && (
+            <Button variant="ghost" size="icon" onClick={onEdit} aria-label={`Edit ${row.fullName}'s marks`}>
+              <Pencil className="h-4 w-4" aria-hidden />
+            </Button>
+          )}
+        </div>
       </td>
     </tr>
   );

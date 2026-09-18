@@ -387,11 +387,14 @@ not yet marked today. **Teacher attendance** is the same register with "Teachers
 class — see below for what it deliberately does not feed into.
 
 **Academics** — exam marks for the six papers a session has: UT-1, UT-2, half-yearly, UT-3, UT-4 and
-final. One card per student per session, keyed `studentId:academicYear`, holding all six as
-percentages. The page is a class gradebook — filter by name, class and session, sort on any column,
-and edit a row in place. Marks are the one number in this system that is **not** a whole number: two
-decimal places are allowed and a third is rejected rather than rounded. A teacher enters marks for
-their assigned classes only. A student's whole history is on the Academics tab of their record.
+final, each marked **subject by subject**, plus drawing, discipline and neatness, which take a grade
+instead of a mark and count towards neither the total nor the percentage. One card per student per session, keyed
+`studentId:academicYear`, holding every paper. A unit test is out of 20 a subject and the two big
+papers are out of 80; which subjects a class sits depends on the class. Totals and percentages are
+**worked out from the marks**, never typed. The page is a class gradebook — filter by name, class and
+session, sort on any column, and edit a row in place. A teacher enters marks for their assigned
+classes only. A student's whole report card, subject by subject, is on the Academics tab of their
+record.
 
 **Fees** — monthly fee heads per class (including transport-only heads), **per-student transport
 fares**, percentage or flat concessions, invoice runs that preview before committing and cannot double-bill, payment recording
@@ -485,7 +488,9 @@ A/T   GET    /attendance/student/:studentId
 A/T   GET    /academics?academicYear&classCode&q&sort&order   gradebook; teacher: assigned classes only
 A/T   GET    /academics/years                      sessions with marks, plus the one in progress
 A/T   GET    /academics/student/:studentId         every session on record, newest first
-A/T   PUT    /academics/marks                      all six papers at once; idempotent upsert
+A/T   GET    /academics/report-card/:studentId/:academicYear/whatsapp-link?exam
+                                           whole session, or one paper; teacher: own classes only
+A/T   PUT    /academics/marks                      all six papers, subject by subject; idempotent upsert
 
 A     GET    /fees/structures
 A     GET|PUT /fees/structures/:classCode/:academicYear
@@ -1040,17 +1045,47 @@ ABSENT (they were not). Records left on a retired value would simply stop being 
 worse than converting them.
 
 
-## Academics: six exams as percentages
+## Academics: six exams, marked subject by subject
 
 A session has six papers — **UT-1, UT-2, half-yearly, UT-3, UT-4, final** — and they are a fixed
 list (`EXAM_CODES`), not a collection. Every class sits the same six, so there is nothing to
 configure and the array order is simply the order of the columns on screen.
 
+**Each paper is marked per subject, and the subjects follow the class:**
+
+| Class | Subjects |
+|---|---|
+| Nursery, LKG | English, Hindi, Maths |
+| UKG | English, Hindi, Maths, GK |
+| 1 – 5 | English, Hindi, Maths, EVS, GK, Computer |
+| 6 – 8 | English, Hindi, Maths, Science, GK, Computer, S.St |
+
+A unit test is **20 marks a subject** and the half-yearly and final are **80** (`MAX_SUBJECT_MARK`),
+so a class-6 final is out of 560 across its seven papers. `SUBJECTS_BY_CLASS` is another fixed list
+rather than something to configure, and it is effectively **append-only** for a class with marks on
+record: a percentage is derived from the subjects a paper was marked on, so dropping one silently
+changes what every closed session recomputes to.
+
+**Three more subjects are graded rather than marked:** drawing, discipline and neatness
+(`GRADED_SUBJECT_CODES`), on every class, on every paper. A grade is short free text — "A+", "B" —
+not a number and not an enum, because pinning it to a fixed list would mean a schema change the
+first time the school wants a new one. Blank collapses to null, so an emptied box reads as "not
+graded" rather than as an empty grade.
+
+**A grade cannot move a percentage, structurally.** They are a separate list and a separate
+subdocument (`subjectGrades`), and `examTotal()` walks the marked subjects alone — there is no path
+by which a grade reaches the arithmetic, so it is not a rule anyone has to remember. Averaging a
+child's neatness into their percentage is not a thing that can be done here by accident.
+
+`SST` is the code and `S.St` only the label. A dot in the code would not survive the trip:
+`rejectMongoOperators` refuses any request key containing `.` or `$` at any depth, and
+react-hook-form reads a dot as a path separator.
+
 **One document per student per session**, keyed `studentId:academicYear`. That makes a second marks
 card for the same student and session structurally impossible, exactly as `studentId:dateKey` does
 for double-marking attendance, and it makes correcting a mark a plain idempotent upsert with no
-"already entered" special case. All six papers live in that one document, so the edit dialog saves
-in a single write.
+"already entered" special case. Every paper lives in that one document, so the edit dialog saves in
+a single write.
 
 **Marks carry a session, and they have to.** The year rollover promotes a student *in place* — their
 class moves up one, their `academicYear` is rewritten and their roll number is cleared for
@@ -1061,30 +1096,124 @@ either, the way attendance and expenses do: "UT-1" is a bare session-scoped labe
 rollover the live student record has moved on, and a closed session is answered entirely from those
 snapshots.
 
-**A mark is a percentage, so it is the one number here that is not a whole number.** The
-integer-rupees rule is about money, and the concession schema already blesses the same exception in
-the other direction — 12.5% is a real thing a school offers. Two decimal places are allowed and a
-third is *rejected, not rounded*: silently turning 87.555 into 87.56 disagrees with whatever the
-teacher read off the answer sheet, and the disagreement is invisible once stored.
+**A subject mark is a whole number; the percentage is not.** A mark is a count of marks on an answer
+sheet, so it takes the `.int()` rule every rupee amount takes, and takes it the same way — 17.5 is
+*rejected, not floored*, because silently filing 17 disagrees with what the teacher read off the
+paper and the disagreement is invisible once stored. The derived percentage is the fractional number
+here, capped at two decimals and rounded at the point of derivation (`Math.round(x * 10_000) / 100`,
+the same idiom as `attendancePercentage()`). That rounded value round-trips through `toFixed(2)` by
+construction, so it still satisfies the stored-percentage check.
 
-**Blank is not zero.** A paper not yet sat is `null` and shows as a dash; 0 is a real mark and is
-stored as one. Sorting keeps that distinction: whichever column the gradebook is sorted on, students
-with no mark for it fall to the bottom in *both* directions. Treating a missing mark as 0 would make
-"who did worst in UT-1" answer with students who have not sat it.
+**The percentage counts only the subjects that were marked.** Two of a class's six papers graded
+gives 34 out of 40, not 34 out of 120. That is "blank is not zero" carried one level down: a paper
+nobody has marked yet must not drag a child's percentage toward zero while the rest of the pile is
+still unmarked. It does mean a child with one paper back can sit at 100% and top the column — the
+number is right and the sort is right, so the gradebook says how many subjects are behind it on
+hover rather than hiding it.
+
+**Blank is still not zero.** A paper not yet sat is `null` and shows as a dash; 0 is a real mark, and
+counts in both halves of the fraction. Sorting keeps that distinction: whichever column the gradebook
+is sorted on, students with no mark for it fall to the bottom in *both* directions. Treating a
+missing mark as 0 would make "who did worst in UT-1" answer with students who have not sat it.
+
+**A percentage can no longer be sent at all.** There is no field for one in the save payload; the
+server derives every one of them from the marks. A fabricated mark is structurally impossible rather
+than merely unvalidated, and `scores` on the document is a derived projection — kept because the
+gradebook sorts on it, and because records written before subject-wise entry have nothing else.
+
+**Records predating subject-wise entry keep their percentage.** One rule covers it: *once an exam has
+subject marks, its percentage is derived from subject marks from then on; until then it keeps
+whatever percentage was already stored.* Without the second half, saving UT-2 on an old card would
+blank every other paper on it. Without the first, a percentage could never be taken back off a card —
+a paper whose marks have all just been deleted is still subject-based, so it derives to null and the
+clearing sticks. The consequence to know: a *wrong* old percentage cannot be blanked in one step, only
+overwritten by entering marks, or cleared by entering them and then deleting them.
 
 **Access follows the class on the student record, never the request.** There is no `classCode` in the
 save payload — the class is read from the student, or from the stored snapshot for a closed session —
 so a teacher cannot reach another class by naming it in the body. That is the same bypass
 `requireClassAccess` closes on every other route; here it is enforced one layer down, because the
 gradebook's class filter is optional and its extractor would reject every teacher asking for "all
-classes" while waving admins through.
+classes" while waving admins through. That same class now decides **which subjects are legal**, which
+is why the subject-set check lives in the service rather than in the schema: zod never sees a class.
+Every save carries all eight subjects — the ones the form did not render are null — so only a
+*non-null* mark for a subject the class is not taught is refused.
 
 **A new card can only be opened for the session in progress.** There is no sound class snapshot for a
 session a student was not in, so rather than guess one and file the marks under the wrong class it is
 refused. An existing card stays correctable in any session, which is what makes a genuine mistake in
-a closed year fixable.
+a closed year fixable — and it is corrected against the class it was *sat* in, so a child promoted to
+class 6 still has EVS on last year's class-5 card and still cannot be given Science on it.
 
-The rules above are pinned by `modules/academics/academics.routes.test.ts`.
+Known limit: a child who **changes class mid-session** keeps the snapshot from when their card was
+opened, so it goes on offering the old class's subjects and the new class's teacher cannot open it.
+There is no way to delete a marks card, so there is no recovery path short of the database. Widening
+the check to accept either class would reopen the "class from the request" hole by proxy; an
+admin-only delete is the honest fix if it ever comes up.
+
+**The report card goes out two ways, from the same data.** The printed card
+(`/academics/report-card/:studentId/:academicYear`) is the one handed to a parent on results day;
+the WhatsApp version is the same card as text, built server-side like the invoice message next door
+— guardian selection, template and length fitting all decided by the API, so the browser only opens
+the URL it is handed. Both read a student's stored history, so a card for a closed session shows the
+class and roll number the child had *then*.
+
+**Either the whole session or one paper.** The card page carries its scope in the URL
+(`?exam=UT1`), not in component state, so what is printed and what a shared link opens are the same
+card. Absent means the whole session, which leaves the plain URL the full card it already was. Only
+papers with something on them are offered, printed or sent — `hasPaperContent()` is the single
+definition all three ask, because a picker that offered a paper the message builder then skipped
+would send a blank card.
+
+**The card is the school's letterhead, so two things live outside the code.** The crest is a file at
+`apps/web/public/school-logo.png`, served as-is so it can be replaced without a rebuild; the card
+hides the image rather than showing a broken one if it is missing. The name printed across the top
+is `schoolName` from Settings, the same string the fee slip and the WhatsApp messages use, so it is
+edited in one place and never drifts between documents. The card deliberately omits the phone
+number: a report card is not a contact card, and the address already says where the school is.
+
+The parent named on the card is the **father** where the record has one, otherwise the primary
+guardian — and the relation travels with the name, so a child whose record has only a mother does
+not get a card headed "Father's Name". That is `cardGuardianOf()`, kept separate from
+`pickReachableGuardian()` on purpose: one decides whose name is printed, the other who may be
+messaged, and a WhatsApp opt-out has no bearing on the first.
+
+**A whole class prints in one go.** "Print results" on the gradebook's filter bar asks for a class
+and a paper and opens every card for them at
+`/academics/report-cards/:academicYear?classCode=&exam=`, one page each (`break-after-page`, dropped
+on the last so N students are N pages, not N+1). It reads the gradebook list rather than a bespoke
+endpoint — a row already carries the marks, the grades and the class snapshot — so a card printed
+for a class and the same card printed for one student come from identical numbers, rendered by one
+shared `ReportCardSheet`.
+
+The dialog does not ask for a session: it uses whichever the gradebook behind it is showing and says
+so. Printing a different session from the one on screen is not something anyone means to do, and a
+third dropdown mostly invites that mistake on results day. A student with no card at all is skipped
+rather than handed a blank sheet, and named on screen, because that is a gap in the marks worth
+noticing before the stack goes out.
+
+Sending is confined to a teacher's own classes even though *reading* a student's history is not.
+Looking at a record is an internal act; messaging a parent is not. The class comes from the snapshot
+on the record, never the request.
+
+The message is laid out to read like the printed card, not as a list: the same letterhead, the same
+student block down to the parent's name, then a fenced monospace table with a `SUBJECT / MARKS`
+heading, the subjects, a rule, and `TOTAL` and `PERCENTAGE` beneath it — with graded subjects in
+their own section below, the way the card gives them their own table. Only the table is fenced; a
+whole message in monospace renders small and cramped on a phone.
+
+Rules are ASCII (`-`, `=`) for the reason `feeMessage.ts` already records: a box-drawing `─` costs
+nine characters percent-encoded, so one 26-wide rule would spend 234 characters of a budget a full
+card already overruns.
+
+A full class-8 card — seven subjects, six papers, three grades each — comes to about 6,000
+characters once percent-encoded, well over the 4,000 `wa.me` ceiling, so it falls back to a
+per-paper summary rather than being truncated. Truncation would take the tail, and the tail is where
+the final exam sits. The fallback keeps the letterhead and the student block and swaps the six
+tables for one `EXAM / RESULT` table, landing around 625 characters.
+
+The rules above are pinned by `modules/academics/academics.routes.test.ts`, and the arithmetic by
+`modules/academics/enteredSubjectsOnly.test.ts`.
 
 ## Dues and other charges
 

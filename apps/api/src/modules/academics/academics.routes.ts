@@ -1,5 +1,7 @@
 import {
   listAcademicsQuerySchema,
+  reportCardParamsSchema,
+  reportCardQuerySchema,
   saveExamResultSchema,
   studentAcademicsParamsSchema,
 } from '@rntps/shared';
@@ -65,6 +67,26 @@ academicsRoutes.get(
   }),
 );
 
+/**
+ * The report card as a WhatsApp message, addressed to the reachable guardian.
+ *
+ * Unlike the read above, this is confined to a teacher's own classes — sending a parent a
+ * message is an outward act, not an internal lookup. The check is inside the service,
+ * against the class snapshot on the record, for the same reason the save's is.
+ */
+academicsRoutes.get(
+  '/report-card/:studentId/:academicYear/whatsapp-link',
+  // Through the middleware rather than a bare .parse(): a ZodError thrown inside a handler
+  // is not an AppError, so errorHandler would report a bad exam code as a 500.
+  validate(reportCardQuerySchema, 'query'),
+  asyncHandler(async (req, res) => {
+    const { studentId } = studentAcademicsParamsSchema.parse(req.params);
+    const { academicYear } = reportCardParamsSchema.parse(req.params);
+    const { exam } = validatedQuery(req, reportCardQuerySchema);
+    res.json(await service.buildReportCardWaLink(studentId, academicYear, currentUser(req), exam));
+  }),
+);
+
 academicsRoutes.put(
   '/marks',
   validate(saveExamResultSchema),
@@ -77,11 +99,16 @@ academicsRoutes.put(
       action: 'academics.save',
       entity: 'examResult',
       entityId: `${payload.studentId}:${payload.academicYear}`,
+      // Both halves: what the teacher typed, and what it worked out to. The percentages
+      // are read off the saved row rather than the payload, because the payload no longer
+      // carries any — they are derived, and a legacy one may have been carried forward.
       after: {
         studentId: payload.studentId,
         academicYear: payload.academicYear,
         classCode: row.classCode,
-        scores: payload.scores,
+        subjectMarks: payload.subjectMarks,
+        subjectGrades: payload.subjectGrades,
+        scores: row.scores,
       },
     });
 

@@ -1,14 +1,25 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
+import { cn } from '@/lib/utils';
 
 interface ModalProps {
   open: boolean;
   onClose: () => void;
   title: string;
   description?: ReactNode;
+  /**
+   * How wide the panel is. `md` suits a handful of fields; `lg` exists for the marks card,
+   * which is forty-odd inputs and unreadable squeezed into a dialog meant for four.
+   */
+  size?: 'md' | 'lg';
   children: ReactNode;
 }
+
+const SIZES: Record<'md' | 'lg', string> = {
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+};
 
 /**
  * A centred dialog over a scrim.
@@ -21,7 +32,7 @@ interface ModalProps {
  * Focus moves to the panel on open so a screen reader lands inside the dialog rather
  * than at the top of the page it is covering.
  */
-export function Modal({ open, onClose, title, description, children }: ModalProps) {
+export function Modal({ open, onClose, title, description, size = 'md', children }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,7 +53,10 @@ export function Modal({ open, onClose, title, description, children }: ModalProp
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center print:hidden">
+    // Centred with auto margins rather than `items-center`, because a panel taller than
+    // the viewport centred by alignment overflows in *both* directions and its top becomes
+    // unreachable by scrolling. Auto margins collapse to zero once free space runs out.
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 print:hidden">
       <div className="absolute inset-0 bg-slate-900/50" onClick={onClose} aria-hidden />
       <div
         ref={panelRef}
@@ -50,7 +64,10 @@ export function Modal({ open, onClose, title, description, children }: ModalProp
         aria-modal="true"
         aria-labelledby="modal-title"
         tabIndex={-1}
-        className="relative w-full max-w-lg rounded-lg bg-white shadow-xl focus:outline-none"
+        className={cn(
+          'relative my-auto w-full rounded-lg bg-white shadow-xl focus:outline-none',
+          SIZES[size],
+        )}
       >
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>

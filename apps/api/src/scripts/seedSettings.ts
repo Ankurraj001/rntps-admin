@@ -18,7 +18,9 @@ async function main(): Promise<void> {
 
   await Settings.create({
     _id: SETTINGS_ID,
-    schoolName: 'RNTPS',
+    // The name as it should read on a document handed to a parent — the report card and
+    // the fee slip both print it verbatim. The student ID prefix stays short.
+    schoolName: 'R N Tagore Public School',
     activeAcademicYear: academicYearFor(),
     studentIdPrefix: 'RNTPS',
     feeDueDayOfMonth: 10,

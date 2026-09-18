@@ -1,14 +1,20 @@
 import {
   EXAM_CODES,
   EXAM_LABELS,
+  GRADED_SUBJECT_CODES,
+  MAX_SUBJECT_MARK,
   STUDENT_STATUSES,
+  SUBJECT_LABELS,
   academicYearForPeriod,
   buildLineItems,
   classLabel,
   formatAadhaar,
   formatINR,
+  examTotal,
   isTransportHead,
+  subjectsForClass,
   TRANSPORT_HEAD_CODE,
+  type StudentExamYear,
 } from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Pencil, Printer, Users } from 'lucide-react';
@@ -735,19 +741,163 @@ function StudentAcademicsTab({ studentId }: { studentId: string }) {
             description={`${classLabel(year.classCode)}${year.rollNo === null ? '' : ` · Roll ${year.rollNo}`}`}
           />
           <CardBody>
-            <dl className="grid gap-5 sm:grid-cols-3">
-              {EXAM_CODES.map((code) => (
-                <Detail
-                  key={code}
-                  label={EXAM_LABELS[code]}
-                  value={year.scores[code] === null ? '—' : `${year.scores[code]!.toFixed(2)}%`}
-                />
-              ))}
-            </dl>
+            <ExamYearMarks year={year} />
           </CardBody>
         </Card>
       ))}
     </>
+  );
+}
+
+/**
+ * One session's marks, read as a report card: subjects down the side, papers across.
+ *
+ * A session recorded before subject-wise entry has percentages and nothing to break down,
+ * so it keeps the plain list it was always shown as — a grid of dashes over a single
+ * surviving number would read as data lost rather than data that was never captured.
+ */
+function ExamYearMarks({ year }: { year: StudentExamYear }) {
+  const subjects = subjectsForClass(year.classCode);
+  const totals = EXAM_CODES.map((code) => examTotal(year.subjectMarks[code], year.classCode, code));
+  const hasSubjectMarks = totals.some((total) => total !== null);
+  const hasGrades = EXAM_CODES.some((code) =>
+    GRADED_SUBJECT_CODES.some((subject) => year.subjectGrades[code][subject] !== null),
+  );
+
+  if (!hasSubjectMarks && !hasGrades) {
+    return (
+      <dl className="grid gap-5 sm:grid-cols-3">
+        {EXAM_CODES.map((code) => (
+          <Detail
+            key={code}
+            label={EXAM_LABELS[code]}
+            value={year.scores[code] === null ? '—' : `${year.scores[code]!.toFixed(2)}%`}
+          />
+        ))}
+      </dl>
+    );
+  }
+
+  return (
+    <div className="-mx-5 overflow-x-auto sm:mx-0">
+      <table className="min-w-full text-sm">
+        <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th scope="col" className="px-5 py-2 text-left font-medium sm:px-3">
+              Subject
+            </th>
+            {EXAM_CODES.map((code) => (
+              <th key={code} scope="col" className="px-3 py-2 text-right font-medium">
+                {EXAM_LABELS[code]}
+                <span className="block font-normal normal-case text-slate-400">
+                  / {MAX_SUBJECT_MARK[code]}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {subjects.map((subject) => (
+            <tr key={subject}>
+              <th scope="row" className="px-5 py-2 text-left font-normal text-slate-700 sm:px-3">
+                {SUBJECT_LABELS[subject]}
+              </th>
+              {EXAM_CODES.map((code) => {
+                const mark = year.subjectMarks[code][subject];
+                return (
+                  <td
+                    key={code}
+                    className={
+                      mark === null
+                        ? 'px-3 py-2 text-right text-slate-400'
+                        : 'px-3 py-2 text-right tabular-nums text-slate-900'
+                    }
+                  >
+                    {mark ?? '—'}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+        {hasGrades && (
+          <tbody className="divide-y divide-slate-100">
+            <tr>
+              <td
+                colSpan={EXAM_CODES.length + 1}
+                className="px-5 pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-slate-500 sm:px-3"
+              >
+                Graded
+              </td>
+            </tr>
+            {GRADED_SUBJECT_CODES.map((subject) => (
+              <tr key={subject}>
+                <th scope="row" className="px-5 py-2 text-left font-normal text-slate-700 sm:px-3">
+                  {SUBJECT_LABELS[subject]}
+                </th>
+                {EXAM_CODES.map((code) => {
+                  const grade = year.subjectGrades[code][subject];
+                  return (
+                    <td
+                      key={code}
+                      className={
+                        grade === null
+                          ? 'px-3 py-2 text-right text-slate-400'
+                          : 'px-3 py-2 text-right uppercase text-slate-900'
+                      }
+                    >
+                      {grade ?? '—'}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        )}
+        <tfoot className="border-t border-slate-200 text-slate-900">
+          <tr>
+            <th scope="row" className="px-5 py-2 text-left font-medium sm:px-3">
+              Total
+            </th>
+            {totals.map((total, index) => (
+              <td
+                key={EXAM_CODES[index]}
+                className={
+                  total
+                    ? 'px-3 py-2 text-right font-medium tabular-nums'
+                    : 'px-3 py-2 text-right text-slate-400'
+                }
+              >
+                {total ? `${total.obtained} / ${total.max}` : '—'}
+              </td>
+            ))}
+          </tr>
+          <tr>
+            <th scope="row" className="px-5 py-2 text-left font-medium sm:px-3">
+              Percentage
+            </th>
+            {totals.map((total, index) => {
+              const code = EXAM_CODES[index]!;
+              // Falls back to the stored percentage so a paper carried over from before
+              // subject-wise entry still shows, on a card where the others break down.
+              const percent = total ? total.percent : year.scores[code];
+              return (
+                <td
+                  key={code}
+                  className={
+                    percent === null
+                      ? 'px-3 py-2 text-right text-slate-400'
+                      : 'px-3 py-2 text-right font-medium tabular-nums'
+                  }
+                >
+                  {percent === null ? '—' : `${percent.toFixed(2)}%`}
+                </td>
+              );
+            })}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 

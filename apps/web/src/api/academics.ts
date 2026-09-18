@@ -1,8 +1,10 @@
 import type {
   AcademicRow,
   AcademicYearsResponse,
-  ExamScores,
   Paginated,
+  ExamCode,
+  ReportCardWaLinkDto,
+  SaveExamResultPayload,
   StudentAcademicsResponse,
 } from '@rntps/shared';
 import { api, qs } from '@/lib/api';
@@ -23,8 +25,13 @@ export const academicsApi = {
   list: (params: AcademicsListParams) => api.get<Paginated<AcademicRow>>(`/academics${qs(params)}`),
   years: () => api.get<AcademicYearsResponse>('/academics/years'),
   student: (studentId: string) => api.get<StudentAcademicsResponse>(`/academics/student/${studentId}`),
-  saveMarks: (payload: { studentId: string; academicYear: string; scores: ExamScores }) =>
-    api.put<AcademicRow>('/academics/marks', payload),
+  // Typed straight off the schema the API validates against, so the two cannot drift.
+  saveMarks: (payload: SaveExamResultPayload) => api.put<AcademicRow>('/academics/marks', payload),
+  /** The report card as a WhatsApp message — guardian, template and fitting all decided server-side. */
+  reportCardWaLink: (studentId: string, academicYear: string, exam?: ExamCode) =>
+    api.get<ReportCardWaLinkDto>(
+      `/academics/report-card/${encodeURIComponent(studentId)}/${encodeURIComponent(academicYear)}/whatsapp-link${qs({ exam })}`,
+    ),
 };
 
 /** Query keys are centralised so mutations can invalidate precisely. */
