@@ -447,6 +447,105 @@ describe('PUT /academics/marks — graded subjects', () => {
   });
 });
 
+describe('POST /academics/marks/:studentId/:academicYear/move-class', () => {
+  function moveClass(header: string, studentId: string, academicYear = YEAR) {
+    return request(app)
+      .post(`/api/v1/academics/marks/${studentId}/${academicYear}/move-class`)
+      .set('Authorization', header);
+  }
+
+  /** A class-1 card, then the student moved to class 6 on the register. */
+  async function seedMovedStudent() {
+    const [studentId] = await seedClass('1', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, {
+      UT1: { ENGLISH: 18, HINDI: 16, MATHS: 19, EVS: 20, GK: 15, COMPUTER: 12 },
+    }).expect(200);
+    await Student.updateOne({ _id: studentId }, { $set: { classCode: '6', rollNo: 9 } });
+    return studentId!;
+  }
+
+  it('refiles the card under the class the student is now in', async () => {
+    const studentId = await seedMovedStudent();
+
+    const res = await moveClass(adminHeader, studentId).expect(200);
+    expect(res.body).toMatchObject({ classCode: '6', rollNo: 9, currentClassCode: null });
+
+    const stored = await ExamResult.findById(`${studentId}:${YEAR}`).lean();
+    expect(stored?.classCodeSnapshot).toBe('6');
+    expect(stored?.rollNoSnapshot).toBe(9);
+  });
+
+  it('recomputes the percentage without the subjects the new class does not sit', async () => {
+    const studentId = await seedMovedStudent();
+
+    // 100 of 120 as class 1; EVS is not a class-6 subject, so 80 of 100 once refiled.
+    const before = await ExamResult.findById(`${studentId}:${YEAR}`).lean();
+    expect(before?.scores.UT1).toBe(83.33);
+
+    await moveClass(adminHeader, studentId).expect(200);
+
+    const after = await ExamResult.findById(`${studentId}:${YEAR}`).lean();
+    expect(after?.scores.UT1).toBe(80);
+    // The mark itself is kept, so moving the card back restores the old figure.
+    expect(after?.subjectMarks?.UT1?.EVS).toBe(20);
+  });
+
+  it('blanks a paper marked only in a subject the new class drops', async () => {
+    const [studentId] = await seedClass('1', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, { UT1: { EVS: 20 } }).expect(200);
+    await Student.updateOne({ _id: studentId }, { $set: { classCode: '6' } });
+
+    await moveClass(adminHeader, studentId!).expect(200);
+
+    // Persisting the null matters: left at 100, the next ordinary save would read the
+    // paper as one predating subject-wise entry and carry the stale figure forward.
+    const stored = await ExamResult.findById(`${studentId}:${YEAR}`).lean();
+    expect(stored?.scores.UT1).toBeNull();
+
+    await saveMarks(adminHeader, studentId!, {}).expect(200);
+    expect((await ExamResult.findById(`${studentId}:${YEAR}`).lean())?.scores.UT1).toBeNull();
+  });
+
+  it('records the class it was moved from, which the snapshot no longer remembers', async () => {
+    const studentId = await seedMovedStudent();
+    await moveClass(adminHeader, studentId).expect(200);
+
+    const entry = await AuditLog.findOne({ action: 'academics.move-class' }).lean();
+    expect(entry?.before).toMatchObject({ classCode: '1' });
+    expect(entry?.after).toMatchObject({ classCode: '6', rollNo: 9 });
+  });
+
+  it('refuses a closed session, whose marks belong to the class they were sat in', async () => {
+    const studentId = await seedMovedStudent();
+    await Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: '2027-28' } });
+
+    const res = await moveClass(adminHeader, studentId).expect(400);
+    expect(res.body.error.message).toMatch(/session in progress/i);
+    expect((await ExamResult.findById(`${studentId}:${YEAR}`).lean())?.classCodeSnapshot).toBe('1');
+  });
+
+  it('refuses when the card already matches the register', async () => {
+    const [studentId] = await seedClass('5', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, { UT1: everySubject('5', 17) }).expect(200);
+
+    const res = await moveClass(adminHeader, studentId!).expect(400);
+    expect(res.body.error.message).toMatch(/already filed under Class 5/i);
+  });
+
+  it('refuses when there is no card to move', async () => {
+    const [studentId] = await seedClass('5', ['Aarav Sharma']);
+    await moveClass(adminHeader, studentId!).expect(400);
+  });
+
+  it('is refused to a teacher, even for their own class', async () => {
+    const studentId = await seedMovedStudent();
+    const { header } = await teacherAuth(['1']);
+
+    await moveClass(header, studentId).expect(403);
+    expect((await ExamResult.findById(`${studentId}:${YEAR}`).lean())?.classCodeSnapshot).toBe('1');
+  });
+});
+
 describe('GET /academics', () => {
   it('lists every enrolled student, with no marks recorded yet', async () => {
     await seedClass('5', ['Aarav Sharma', 'Diya Verma']);
@@ -551,6 +650,32 @@ describe('GET /academics', () => {
 
     const current = await request(app).get('/api/v1/academics').set('Authorization', adminHeader).expect(200);
     expect(current.body.items[0]).toMatchObject({ classCode: '6', rollNo: null, hasRecord: false });
+  });
+
+  it('flags a card filed under a class the student has since left', async () => {
+    const [studentId] = await seedClass('1', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, { UT1: { ENGLISH: 18 } }).expect(200);
+    await Student.updateOne({ _id: studentId }, { $set: { classCode: '6' } });
+
+    const res = await request(app).get('/api/v1/academics').set('Authorization', adminHeader).expect(200);
+    expect(res.body.items[0]).toMatchObject({ classCode: '1', currentClassCode: '6' });
+  });
+
+  it('does not flag a closed session, where the live class differing is the whole point', async () => {
+    const [studentId] = await seedClass('5', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, { UT1: everySubject('5', 16) }).expect(200);
+    await Student.updateOne(
+      { _id: studentId },
+      { $set: { classCode: '6', academicYear: '2027-28', rollNo: null } },
+    );
+    await Settings.updateOne({ _id: SETTINGS_ID }, { $set: { activeAcademicYear: '2027-28' } });
+
+    const res = await request(app)
+      .get('/api/v1/academics')
+      .query({ academicYear: YEAR })
+      .set('Authorization', adminHeader)
+      .expect(200);
+    expect(res.body.items[0]).toMatchObject({ classCode: '5', currentClassCode: null });
   });
 
   it('shows the current name but the session\'s class for an archived row', async () => {

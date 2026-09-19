@@ -1145,11 +1145,29 @@ refused. An existing card stays correctable in any session, which is what makes 
 a closed year fixable — and it is corrected against the class it was *sat* in, so a child promoted to
 class 6 still has EVS on last year's class-5 card and still cannot be given Science on it.
 
-Known limit: a child who **changes class mid-session** keeps the snapshot from when their card was
-opened, so it goes on offering the old class's subjects and the new class's teacher cannot open it.
-There is no way to delete a marks card, so there is no recovery path short of the database. Widening
-the check to accept either class would reopen the "class from the request" hole by proxy; an
-admin-only delete is the honest fix if it ever comes up.
+**A card can be refiled when a child changes class mid-session.** The snapshot is written once, which
+is right for a rollover — without it April would re-label every past year's marks with this year's
+class — but wrong for a correction: a child moved from class 1 to class 6 in November was *filed*
+wrong, and their card goes on offering class-1 subjects and locking out the class-6 teacher. The
+code cannot tell a rollover from a correction, so an admin does, via
+`POST /academics/marks/:studentId/:academicYear/move-class`. The gradebook flags the mismatch on the
+row and the edit dialog explains it, both driven by `currentClassCode`, which the API sets only for
+an *open* session — in a closed one the live class differing from the snapshot is the whole point of
+the snapshot.
+
+Two things make the move safe. **No mark is deleted**: a subject the new class does not sit simply
+stops being walked by `examTotal()`, so it stops counting and stops showing, and moving the card
+back brings it straight back. And **the stored percentages are recomputed and persisted**, because
+the gradebook renders those while the report card recomputes from the marks — leave them and the
+table and the printed card quietly disagree about the same child. Persisting the *nulls* matters
+just as much: a paper marked only in a dropped subject derives to null, and leaving its old figure
+would make the next ordinary save read it as a record predating subject-wise entry and carry the
+stale number forward with nothing on screen to back it.
+
+Teachers cannot refile, even for their own class: it moves a student out of one gradebook and into
+another, which is a decision about the register rather than about marks. Closed sessions are
+refused outright. The audit line carries the class it was moved *from*, since the snapshot no longer
+remembers.
 
 **The report card goes out two ways, from the same data.** The printed card
 (`/academics/report-card/:studentId/:academicYear`) is the one handed to a parent on results day;

@@ -12,6 +12,7 @@ import {
   examSubjectMarksSchema,
   examTotal,
   subjectMarksForClass,
+  subjectsDroppedByClassChange,
   subjectsForClass,
   type AcademicRow,
   type ExamCode,
@@ -20,11 +21,12 @@ import {
   type SubjectCode,
 } from '@rntps/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 import { type ChangeEvent } from 'react';
 import { useForm, useWatch, type Control, type Path } from 'react-hook-form';
 import { academicKeys, academicsApi } from '@/api/academics';
+import { useCurrentUser } from '@/auth/AuthProvider';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
 import { ErrorBlock, Spinner } from '@/components/ui/Feedback';
@@ -200,6 +202,10 @@ export function EditMarksModal({ row, onClose }: EditMarksModalProps) {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const subjects = subjectsForClass(row.classCode);
+  const isAdmin = useCurrentUser().role === 'ADMIN';
+  const dropped = row.currentClassCode
+    ? subjectsDroppedByClassChange(row.subjectMarks, row.classCode, row.currentClassCode)
+    : [];
 
   // Papers holding a percentage with no marks behind it. Read from the row rather than the
   // form, so it does not change under the teacher as they type.
@@ -267,6 +273,21 @@ export function EditMarksModal({ row, onClose }: EditMarksModalProps) {
     },
   });
 
+  /**
+   * Refiles the card under the class the student is now in.
+   *
+   * Closes on success rather than staying open: the class decides which subjects the form
+   * renders, so the open form is describing the wrong class the moment this lands.
+   */
+  const moveClass = useMutation({
+    mutationFn: () => academicsApi.moveClass(row.studentId, row.academicYear),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: academicKeys.all });
+      onClose();
+    },
+    onError: (error: unknown) => setServerError((error as Error).message),
+  });
+
   const errors = form.formState.errors;
   const markError = (exam: ExamCode, subject: SubjectCode) =>
     errors.subjectMarks?.[exam]?.[subject]?.message;
@@ -310,6 +331,51 @@ export function EditMarksModal({ row, onClose }: EditMarksModalProps) {
       >
         <div className="space-y-4 px-5 py-4">
           {serverError && <ErrorBlock message={serverError} />}
+
+          {row.currentClassCode && (
+            <div className="rounded-md bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                <div>
+                  <p className="font-medium">
+                    This card is filed under {classLabel(row.classCode)}, but {row.fullName} is now
+                    in {classLabel(row.currentClassCode)}.
+                  </p>
+                  <p className="mt-1">
+                    It is showing {classLabel(row.classCode)} subjects, and only
+                    {' '}{classLabel(row.classCode)}&apos;s teacher can open it.
+                    {dropped.length > 0 && (
+                      <>
+                        {' '}Refiling keeps every mark, but{' '}
+                        <strong>
+                          {dropped.map((subject) => SUBJECT_LABELS[subject]).join(', ')}
+                        </strong>{' '}
+                        {dropped.length === 1 ? 'is' : 'are'} not taught in{' '}
+                        {classLabel(row.currentClassCode)}, so {dropped.length === 1 ? 'it' : 'they'}{' '}
+                        will stop counting towards the totals. Moving it back would bring{' '}
+                        {dropped.length === 1 ? 'it' : 'them'} straight back.
+                      </>
+                    )}
+                  </p>
+                  {isAdmin ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => moveClass.mutate()}
+                      disabled={moveClass.isPending}
+                    >
+                      {moveClass.isPending && <Spinner />}
+                      Refile under {classLabel(row.currentClassCode)}
+                    </Button>
+                  ) : (
+                    <p className="mt-2 font-medium">Ask an admin to refile it.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <p className="text-sm text-slate-500">
             Marks are whole numbers. The total and percentage are worked out from them, and count

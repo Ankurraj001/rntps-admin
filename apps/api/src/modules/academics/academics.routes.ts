@@ -1,5 +1,6 @@
 import {
   listAcademicsQuerySchema,
+  moveCardParamsSchema,
   reportCardParamsSchema,
   reportCardQuerySchema,
   saveExamResultSchema,
@@ -9,7 +10,7 @@ import { Router } from 'express';
 import { AppError } from '../../lib/AppError.js';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { recordAudit } from '../../lib/audit.js';
-import { currentUser, requireAuth } from '../../middleware/auth.js';
+import { currentUser, requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import * as service from './academics.service.js';
 
@@ -84,6 +85,35 @@ academicsRoutes.get(
     const { academicYear } = reportCardParamsSchema.parse(req.params);
     const { exam } = validatedQuery(req, reportCardQuerySchema);
     res.json(await service.buildReportCardWaLink(studentId, academicYear, currentUser(req), exam));
+  }),
+);
+
+/**
+ * Refiles a marks card under the class the student is now in.
+ *
+ * Admin only, and deliberately not something a teacher can do for their own class: it
+ * moves a student's card *out* of one teacher's gradebook and into another's, which is a
+ * decision about the register rather than about marks.
+ */
+academicsRoutes.post(
+  '/marks/:studentId/:academicYear/move-class',
+  requireRole('ADMIN'),
+  asyncHandler(async (req, res) => {
+    const { studentId, academicYear } = moveCardParamsSchema.parse(req.params);
+    const before = await service.getCardClass(studentId, academicYear);
+    const row = await service.moveCardToCurrentClass(studentId, academicYear, currentUser(req).id);
+
+    // `before` carries the class it was filed under: the snapshot is overwritten, so this
+    // line is the only remaining record of where the marks used to sit.
+    await recordAudit(req, {
+      action: 'academics.move-class',
+      entity: 'examResult',
+      entityId: `${studentId}:${academicYear}`,
+      before,
+      after: { classCode: row.classCode, rollNo: row.rollNo, scores: row.scores },
+    });
+
+    res.json(row);
   }),
 );
 

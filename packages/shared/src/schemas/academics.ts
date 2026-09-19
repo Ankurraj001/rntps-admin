@@ -197,6 +197,11 @@ export const reportCardQuerySchema = z.object({
   exam: z.enum(EXAM_CODES).optional(),
 });
 
+export const moveCardParamsSchema = z.object({
+  studentId: z.string().trim().toUpperCase().min(1),
+  academicYear: z.string().regex(ACADEMIC_YEAR_PATTERN, 'Use the form 2026-27'),
+});
+
 export type ExamScores = z.output<typeof examScoresSchema>;
 export type SubjectMarks = z.output<ReturnType<typeof subjectMarksSchema>>;
 export type ExamSubjectMarks = z.output<typeof examSubjectMarksSchema>;
@@ -268,6 +273,25 @@ export function hasAnySubjectMark(
   if (!marks) return false;
   return subjectsForClass(classCode).some(
     (subject) => marks[subject] !== null && marks[subject] !== undefined,
+  );
+}
+
+/**
+ * Marked subjects that the new class does not sit, so a class change would orphan them.
+ *
+ * Used to say plainly what a move costs before it happens. The marks are not deleted by a
+ * move — `examTotal()` simply stops walking them, so they stop counting and stop showing.
+ * Moving the card back would bring them straight back.
+ */
+export function subjectsDroppedByClassChange(
+  subjectMarks: ExamSubjectMarks,
+  fromClassCode: ClassCode | string,
+  toClassCode: ClassCode | string,
+): SubjectCode[] {
+  const kept = new Set<SubjectCode>(subjectsForClass(toClassCode));
+  return subjectsForClass(fromClassCode).filter(
+    (subject) =>
+      !kept.has(subject) && EXAM_CODES.some((exam) => subjectMarks[exam]?.[subject] != null),
   );
 }
 
@@ -387,6 +411,13 @@ export interface AcademicRow {
   subjectGrades: ExamSubjectGrades;
   /** Named on the printed card. Null when the student has no guardian on record. */
   guardian: CardGuardian | null;
+  /**
+   * The class the student is in *now*, set only when it disagrees with this card's
+   * snapshot and the disagreement is worth acting on — an open session, with marks on
+   * record. Null otherwise, including after a rollover, where the live class differing
+   * from the snapshot is the whole point of the snapshot.
+   */
+  currentClassCode: string | null;
   /** False until marks have been saved at least once — the row exists, the record does not. */
   hasRecord: boolean;
   updatedAt: string | null;

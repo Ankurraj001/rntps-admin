@@ -100,6 +100,19 @@ function toSubjectGrades(grades: ExamSubjectGrades | undefined): ExamSubjectGrad
 }
 
 /**
+ * The student's class now, when it disagrees with the card's — and only when that
+ * disagreement means something is wrong rather than something moved on.
+ */
+function mismatchedClass(
+  isOpenSession: boolean,
+  snapshot: ClassCode,
+  live: ClassCode | undefined,
+): string | null {
+  if (!isOpenSession || !live || live === snapshot) return null;
+  return live;
+}
+
+/**
  * Roll number first where present, then name — the order a paper register uses, and the
  * same tie-break the attendance roster applies.
  */
@@ -200,12 +213,17 @@ export async function listAcademics(
       subjectMarks: emptySubjectMarks(),
       subjectGrades: emptySubjectGrades(),
       guardian: cardGuardianOf(student.guardians),
+      currentClassCode: null,
       hasRecord: false,
       updatedAt: null,
     });
   }
 
   const guardianById = new Map(students.map((s) => [s._id, cardGuardianOf(s.guardians)]));
+  const liveClassById = new Map(students.map((s) => [s._id, s.classCode]));
+  // Only the session in progress can be out of step. In a closed one the live class
+  // differing from the snapshot is not a mistake, it is what the snapshot is for.
+  const isOpenSession = academicYear === settings.activeAcademicYear;
 
   for (const record of records) {
     const enrolled = byStudent.get(record.studentId);
@@ -221,6 +239,11 @@ export async function listAcademics(
       subjectMarks: toSubjectMarks(record.subjectMarks),
       subjectGrades: toSubjectGrades(record.subjectGrades),
       guardian: guardianById.get(record.studentId) ?? null,
+      currentClassCode: mismatchedClass(
+        isOpenSession,
+        record.classCodeSnapshot,
+        liveClassById.get(record.studentId),
+      ),
       hasRecord: true,
       updatedAt: record.updatedAt?.toISOString() ?? null,
     });
@@ -447,6 +470,11 @@ export async function saveExamResult(
     subjectMarks: payload.subjectMarks,
     subjectGrades: payload.subjectGrades,
     guardian: cardGuardianOf(student.guardians),
+    currentClassCode: mismatchedClass(
+      payload.academicYear === settings.activeAcademicYear,
+      classCode,
+      student.classCode,
+    ),
     hasRecord: true,
     updatedAt: new Date().toISOString(),
   };
@@ -521,5 +549,105 @@ export async function buildReportCardWaLink(
     guardianPhone: guardian.phone,
     waLink: buildWaLink(guardian.phone, message),
     compact,
+  };
+}
+
+/** Where a card is filed today, for the audit line the move is about to make stale. */
+export async function getCardClass(
+  studentId: string,
+  academicYear: string,
+): Promise<{ classCode: string; rollNo: number | null; scores: ExamScores } | undefined> {
+  const record = await ExamResult.findById(examResultId(studentId.toUpperCase(), academicYear))
+    .lean<ExamResultDoc>();
+  if (!record) return undefined;
+  return {
+    classCode: record.classCodeSnapshot,
+    rollNo: record.rollNoSnapshot,
+    scores: toScores(record.scores),
+  };
+}
+
+/**
+ * Refiles a marks card under the class the student is actually in.
+ *
+ * The class snapshot is written once and never rewritten, which is right for a rollover —
+ * without it, April would re-label every past year's marks with this year's class. It is
+ * wrong for a correction: a child moved from class 1 to class 6 in November was *filed*
+ * wrong, and their card goes on offering class-1 subjects and locking out the class-6
+ * teacher until someone says so. The code cannot tell the two apart, so an admin does.
+ *
+ * Restricted to the session in progress. A closed year is history and stays frozen; the
+ * only reason to move a card is that the student is still sitting papers in a new class.
+ *
+ * Marks are not deleted. A subject the new class does not sit simply stops being walked by
+ * `examTotal()`, so it stops counting and stops showing — and moving the card back brings
+ * it straight back. What *is* rewritten is the stored percentages, because the gradebook
+ * renders those while the report card recomputes from the marks: leave them and the table
+ * and the printed card would quietly disagree about the same child.
+ */
+export async function moveCardToCurrentClass(
+  studentId: string,
+  academicYear: string,
+  actorId: string,
+): Promise<AcademicRow> {
+  const id = studentId.toUpperCase();
+  const settings = await getSettings();
+
+  const [student, record] = await Promise.all([
+    Student.findById(id).select('fullName classCode rollNo guardians').lean<RosterStudent>(),
+    ExamResult.findById(examResultId(id, academicYear)).lean<ExamResultDoc>(),
+  ]);
+
+  if (!student) throw AppError.notFound(`No student found with ID ${studentId}`);
+  if (!record) {
+    throw AppError.badRequest(`No marks are on record for ${student.fullName} in ${academicYear}`);
+  }
+  if (academicYear !== settings.activeAcademicYear) {
+    throw AppError.badRequest(
+      `Only the session in progress (${settings.activeAcademicYear}) can be refiled. ` +
+        `${academicYear} is closed, and its marks belong to the class they were sat in.`,
+    );
+  }
+  if (record.classCodeSnapshot === student.classCode) {
+    throw AppError.badRequest(
+      `This card is already filed under ${classLabel(student.classCode)}.`,
+    );
+  }
+
+  const subjectMarks = toSubjectMarks(record.subjectMarks);
+  // Recomputed against the new class, and *persisted* — including the nulls. A paper
+  // marked only in a dropped subject derives to null here; leaving its old percentage
+  // would make the next ordinary save treat it as a record predating subject-wise entry
+  // and carry the stale figure forward with nothing on screen to back it.
+  const scores = emptyScores();
+  for (const exam of EXAM_CODES) {
+    scores[exam] = examTotal(subjectMarks[exam], student.classCode, exam)?.percent ?? null;
+  }
+
+  await ExamResult.updateOne(
+    { _id: examResultId(id, academicYear) },
+    {
+      $set: {
+        classCodeSnapshot: student.classCode,
+        rollNoSnapshot: student.rollNo,
+        scores,
+        updatedBy: actorId,
+      },
+    },
+  );
+
+  return {
+    studentId: id,
+    fullName: student.fullName,
+    classCode: student.classCode,
+    rollNo: student.rollNo,
+    academicYear,
+    scores,
+    subjectMarks,
+    subjectGrades: toSubjectGrades(record.subjectGrades),
+    guardian: cardGuardianOf(student.guardians),
+    currentClassCode: null,
+    hasRecord: true,
+    updatedAt: new Date().toISOString(),
   };
 }

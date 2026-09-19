@@ -10,7 +10,7 @@ import {
   type ExamCode,
 } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Printer, Search } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Pencil, Printer, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { academicKeys, academicsApi, type AcademicsListParams } from '@/api/academics';
@@ -307,7 +307,20 @@ function MarksRow({
   return (
     <tr className="hover:bg-slate-50">
       <td className="px-5 py-3 font-medium text-slate-900">{row.fullName}</td>
-      <td className="px-5 py-3 text-slate-600">{classLabel(row.classCode)}</td>
+      <td className="px-5 py-3 text-slate-600">
+        <span className="inline-flex items-center gap-1.5">
+          {classLabel(row.classCode)}
+          {/* The card is filed under the class the marks were entered in, which is no
+              longer where the student sits. Flagged rather than silently corrected: it
+              changes whose gradebook they appear in, so an admin decides. */}
+          {row.currentClassCode && (
+            <AlertTriangle
+              className="h-4 w-4 shrink-0 text-amber-600"
+              aria-label={`Filed under ${classLabel(row.classCode)}, but now in ${classLabel(row.currentClassCode)}`}
+            />
+          )}
+        </span>
+      </td>
       <td className="px-5 py-3 text-slate-600">{row.rollNo ?? '—'}</td>
       {EXAM_CODES.map((code) => (
         <td

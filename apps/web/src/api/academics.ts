@@ -27,6 +27,12 @@ export const academicsApi = {
   student: (studentId: string) => api.get<StudentAcademicsResponse>(`/academics/student/${studentId}`),
   // Typed straight off the schema the API validates against, so the two cannot drift.
   saveMarks: (payload: SaveExamResultPayload) => api.put<AcademicRow>('/academics/marks', payload),
+  /** Refiles a marks card under the class the student is now in. Admin only. */
+  moveClass: (studentId: string, academicYear: string) =>
+    api.post<AcademicRow>(
+      `/academics/marks/${encodeURIComponent(studentId)}/${encodeURIComponent(academicYear)}/move-class`,
+      {},
+    ),
   /** The report card as a WhatsApp message — guardian, template and fitting all decided server-side. */
   reportCardWaLink: (studentId: string, academicYear: string, exam?: ExamCode) =>
     api.get<ReportCardWaLinkDto>(
