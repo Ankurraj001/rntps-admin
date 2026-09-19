@@ -3,10 +3,10 @@ import {
   classLabel,
   formatINR,
   lastDayOfPeriod,
-  netLabel,
   netRupees,
   toDateKey,
   toPeriod,
+  type ExpenseAllTimeDto,
   type ExpenseDirection,
   type ExpenseDto,
 } from '@rntps/shared';
@@ -497,15 +497,16 @@ function ExpensesReport() {
             <Input type="month" value={month} onChange={(e) => onMonthChange(e.target.value)} />
           </label>
 
-          <Button
-            variant="secondary"
-            className="ml-auto"
-            disabled={email.isPending}
-            onClick={() => email.mutate()}
-          >
-            {email.isPending ? <Spinner /> : <Mail className="h-4 w-4" aria-hidden />}
-            Email this month
-          </Button>
+          {/* Grouped so the two stay together against the right edge, and so the button
+              keeps that edge on a month where there is no all-time figure to show yet. */}
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            {expenses.data?.allTime && <OverallNetCard allTime={expenses.data.allTime} />}
+
+            <Button variant="secondary" disabled={email.isPending} onClick={() => email.mutate()}>
+              {email.isPending ? <Spinner /> : <Mail className="h-4 w-4" aria-hidden />}
+              Email this month
+            </Button>
+          </div>
         </div>
 
         {/* The result is reported rather than assumed: sendMail never throws, so a send that
@@ -592,13 +593,14 @@ function ExpensesReport() {
             </Card>
           </div>
 
+          {/* The three sides behind the overall figure in the filter bar above. The net
+              itself is stated there and deliberately not repeated here. */}
           {expenses.data.allTime && (
             <p className="text-xs text-slate-500">
               <span className="font-medium text-slate-600">All time total:</span> collected{' '}
               {formatINR(expenses.data.allTime.collectedRupees)} · other income{' '}
               {formatINR(expenses.data.allTime.gainRupees)} · spent{' '}
-              {formatINR(expenses.data.allTime.expenseRupees)} ·{' '}
-              {netLabel(netRupees(expenses.data.allTime))}
+              {formatINR(expenses.data.allTime.expenseRupees)}
             </p>
           )}
 
@@ -800,6 +802,40 @@ function ProfitCard({
         <p className="text-xs text-slate-500">{label} · money in minus expenses</p>
       </CardBody>
     </Card>
+  );
+}
+
+/**
+ * Every month added together: profit of ₹1,000 in August against a loss of ₹500 in September
+ * reads as a profit of ₹500 overall.
+ *
+ * It is the *same* arithmetic as the month card, over the whole history rather than one
+ * month, which is why summing the months is never needed — `allTime` already carries all
+ * three sides. Sits in the filter bar rather than the grid below it because it is the one
+ * figure on this tab the month picker does not change, and a card that ignores the control
+ * next to it belongs next to that control, not among four cards that all obey it.
+ *
+ * Absent until the first expense is recorded — the API sends `allTime: null` until then, so
+ * a school with fee income and no recorded spending is not shown a profit made of all of it.
+ */
+function OverallNetCard({ allTime }: { allTime: ExpenseAllTimeDto }) {
+  const net = netRupees(allTime);
+  const inProfit = net >= 0;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2">
+      <p className="text-xs uppercase tracking-wide text-slate-500">
+        Overall {inProfit ? 'profit' : 'loss'}
+      </p>
+      <p
+        className={cn(
+          'text-lg font-semibold tabular-nums',
+          inProfit ? 'text-emerald-700' : 'text-red-700',
+        )}
+      >
+        {formatINR(Math.abs(net))}
+      </p>
+    </div>
   );
 }
 
