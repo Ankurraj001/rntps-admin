@@ -1,7 +1,6 @@
 import {
   EXAM_LABELS,
   GRADED_SUBJECT_CODES,
-  GUARDIAN_NAME_LABELS,
   MAX_SUBJECT_MARK,
   SUBJECT_LABELS,
   classLabel,
@@ -28,6 +27,15 @@ const LOGO_SRC = '/school-logo.png';
  * on the one medium it exists for.
  */
 const PRINT_EXACT = '[print-color-adjust:exact] [-webkit-print-color-adjust:exact]';
+
+/** Names the two halves of a CBSE-pattern card: what is marked, and what is graded. */
+function SectionHeading({ children }: { children: string }) {
+  return (
+    <h2 className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.15em] text-blue-900">
+      {children}
+    </h2>
+  );
+}
 
 /** A label-and-value pair from the identity block. */
 function Detail({ label, value }: { label: string; value: string }) {
@@ -101,6 +109,11 @@ export function ReportCardSheet({
           {school.schoolAddress && (
             <p className="mt-0.5 text-sm text-slate-600">{school.schoolAddress}</p>
           )}
+          {/* Part of the letterhead rather than a badge on the marks: it describes the
+              school, not this particular card. */}
+          <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
+            Based on CBSE Pattern
+          </p>
           <p
             className={`mt-3 inline-block rounded-full bg-blue-900 px-5 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white ${PRINT_EXACT}`}
           >
@@ -121,14 +134,14 @@ export function ReportCardSheet({
       <dl className="grid gap-x-10 gap-y-2.5 px-6 py-5 text-sm sm:grid-cols-2 sm:px-8">
         <Detail label="Name" value={studentName} />
         <Detail label="Class" value={classLabel(year.classCode)} />
-        <Detail
-          label={guardian ? GUARDIAN_NAME_LABELS[guardian.relation] : "Father's Name"}
-          value={guardian?.name ?? '—'}
-        />
+        {/* "Parent's Name" rather than the relation: it reads correctly whether the
+            record holds a father, a mother or another guardian. */}
+        <Detail label="Parent's Name" value={guardian?.name ?? '—'} />
         <Detail label="Roll No" value={year.rollNo === null ? '—' : String(year.rollNo)} />
       </dl>
 
       <div className="px-6 pb-2 sm:px-8">
+        <SectionHeading>Scholastic Assessment</SectionHeading>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className={`bg-blue-900 text-xs uppercase tracking-wide text-white ${PRINT_EXACT}`}>
@@ -213,14 +226,15 @@ export function ReportCardSheet({
         </table>
       </div>
 
-      <div className="px-6 pb-5 sm:px-8">
+      <div className="px-6 pb-5 pt-4 sm:px-8">
+        <SectionHeading>Co-Scholastic Assessment</SectionHeading>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr
               className={`bg-slate-100 text-xs uppercase tracking-wide text-slate-700 ${PRINT_EXACT}`}
             >
               <th scope="col" className="border border-slate-400 px-3 py-1.5 text-left font-semibold">
-                Graded
+                Area
               </th>
               {columns.map((code) => (
                 <th

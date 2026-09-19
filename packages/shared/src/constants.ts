@@ -69,26 +69,6 @@ export type Gender = (typeof GENDERS)[number];
 export const GUARDIAN_RELATIONS = ['FATHER', 'MOTHER', 'GUARDIAN'] as const;
 export type GuardianRelation = (typeof GUARDIAN_RELATIONS)[number];
 
-/**
- * How a guardian is named on a document handed to a family, e.g. a report card.
- *
- * The relation is carried rather than assumed: a report card traditionally says "Father's
- * Name", but a child whose record has only a mother or a guardian must not have that row
- * mislabelled on the card they take home.
- */
-/** Just the relation, for a line that already reads as a label, e.g. "Father: Rajesh". */
-export const GUARDIAN_LABELS: Record<GuardianRelation, string> = {
-  FATHER: 'Father',
-  MOTHER: 'Mother',
-  GUARDIAN: 'Guardian',
-};
-
-export const GUARDIAN_NAME_LABELS: Record<GuardianRelation, string> = {
-  FATHER: "Father's Name",
-  MOTHER: "Mother's Name",
-  GUARDIAN: "Guardian's Name",
-};
-
 export const CONCESSION_TYPES = ['NONE', 'PERCENT', 'FLAT'] as const;
 export type ConcessionType = (typeof CONCESSION_TYPES)[number];
 

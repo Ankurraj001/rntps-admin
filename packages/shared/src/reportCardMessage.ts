@@ -15,7 +15,6 @@ import {
   EXAM_CODES,
   EXAM_LABELS,
   GRADED_SUBJECT_CODES,
-  GUARDIAN_LABELS,
   MAX_SUBJECT_MARK,
   SUBJECT_LABELS,
   classLabel,
@@ -95,9 +94,8 @@ function heading(input: ReportCardInput, scope: ReportCardScope): string[] {
   lines.push(`_${title} · ${input.academicYear}_`, '');
 
   lines.push(`Name: *${input.fullName}*`);
-  if (input.guardian) {
-    lines.push(`${GUARDIAN_LABELS[input.guardian.relation]}: ${input.guardian.name}`);
-  }
+  // "Parent" rather than the relation, matching the printed card's label.
+  if (input.guardian) lines.push(`Parent: ${input.guardian.name}`);
   lines.push(
     `${classLabel(input.classCode)}${input.rollNo === null ? '' : ` · Roll ${input.rollNo}`}`,
     '',
@@ -145,7 +143,7 @@ function paperBlock(input: ReportCardInput, exam: ExamCode, labelled: boolean): 
   }
 
   if (grades.length > 0) {
-    lines.push(THIN_RULE, 'GRADED');
+    lines.push(THIN_RULE, 'CO-SCHOLASTIC');
     for (const grade of grades) lines.push(row(grade.label, grade.value));
   }
 
