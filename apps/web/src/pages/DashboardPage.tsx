@@ -34,6 +34,15 @@ export function DashboardPage() {
   const dashboard = useQuery({ queryKey: reportKeys.dashboard, queryFn: reportsApi.dashboard });
   const today = dashboard.data?.today;
 
+  // The class bars are scaled against the biggest class, not against the roll total: eleven
+  // classes sharing ~200 students puts a typical class under a tenth of the track, so every
+  // bar read as a stub and the differences between them were the part that got lost. The
+  // number beside each bar is still the count, so nothing here is claiming a percentage.
+  const largestClassSize = Math.max(
+    0,
+    ...(dashboard.data?.studentsByClass.map((row) => row.count) ?? []),
+  );
+
   const clearHoliday = useMutation({
     mutationFn: (dateKey: string) => attendanceApi.clearHoliday(dateKey),
     onSuccess: async () => {
@@ -319,7 +328,7 @@ export function DashboardPage() {
                       const count =
                         dashboard.data.studentsByClass.find((row) => row.classCode === code)
                           ?.count ?? 0;
-                      const share = (count / dashboard.data.activeStudents) * 100;
+                      const share = (count / largestClassSize) * 100;
                       return (
                         <li key={code} className="flex items-center gap-3 text-sm">
                           <Link
