@@ -1,4 +1,13 @@
-import { isSunday, toDateKey, type Holiday, type SettingsDto } from '@rntps/shared';
+import {
+  DEFAULT_REPORT_SCOPE,
+  REPORT_SCOPE_CODES,
+  REPORT_SCOPE_LABELS,
+  isSunday,
+  toDateKey,
+  type Holiday,
+  type ReportScopeCode,
+  type SettingsDto,
+} from '@rntps/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -10,7 +19,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { DateInput } from '@/components/ui/DateInput';
 import { ErrorBlock, LoadingBlock, Spinner } from '@/components/ui/Feedback';
-import { Field, Input } from '@/components/ui/Field';
+import { Field, Input, Select } from '@/components/ui/Field';
 import { formatDate } from '@/lib/utils';
 
 export function SettingsPage() {
@@ -33,6 +42,7 @@ export function SettingsPage() {
         activeAcademicYear: form.activeAcademicYear,
         studentIdPrefix: form.studentIdPrefix,
         feeDueDayOfMonth: form.feeDueDayOfMonth,
+        defaultReportScope: form.defaultReportScope,
       }),
     onSuccess: async () => {
       setSaved(true);
@@ -96,6 +106,30 @@ export function SettingsPage() {
                 value={form.feeDueDayOfMonth ?? 10}
                 onChange={(e) => set('feeDueDayOfMonth', Number(e.target.value))}
               />
+            </Field>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Report cards"
+            description="Which paper a card opens on when a link does not name one."
+          />
+          <CardBody>
+            <Field
+              label="Default view"
+              hint="Applies to a single student's card, to a class print run, and to the paper the print dialog suggests. Any card can still be switched to another paper once open."
+            >
+              <Select
+                value={form.defaultReportScope ?? DEFAULT_REPORT_SCOPE}
+                onChange={(e) => set('defaultReportScope', e.target.value as ReportScopeCode)}
+              >
+                {REPORT_SCOPE_CODES.map((code) => (
+                  <option key={code} value={code}>
+                    {REPORT_SCOPE_LABELS[code]}
+                  </option>
+                ))}
+              </Select>
             </Field>
           </CardBody>
         </Card>

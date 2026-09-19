@@ -8,7 +8,7 @@ import {
   subjectsForClass,
   type CardGuardian,
   type ExamCode,
-  type SettingsDto,
+  type SchoolInfoDto,
   type StudentExamYear,
 } from '@rntps/shared';
 import { useState } from 'react';
@@ -66,7 +66,8 @@ export function ReportCardSheet({
   columns,
   scope,
 }: {
-  school: SettingsDto;
+  /** The letterhead only: this draws a school's name and address, not its settings. */
+  school: SchoolInfoDto;
   studentName: string;
   guardian: CardGuardian | null;
   year: StudentExamYear;

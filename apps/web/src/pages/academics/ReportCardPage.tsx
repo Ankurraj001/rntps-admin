@@ -1,8 +1,9 @@
 import {
+  DEFAULT_REPORT_SCOPE,
   EXAM_CODES,
   EXAM_LABELS,
+  FULL_SESSION,
   papersWithContent,
-  type ExamCode,
 } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Printer } from 'lucide-react';
@@ -15,6 +16,7 @@ import { WhatsAppReportCardButton } from '@/components/academics/WhatsAppReportC
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Field';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
+import { scopeFromParam, scopeToParam } from '@/lib/reportScope';
 
 /**
  * The results card handed to a parent, for one session.
@@ -30,16 +32,9 @@ export function ReportCardPage() {
   }>();
   const navigate = useNavigate();
   const location = useLocation();
-  /*
-    Scope lives in the URL rather than in component state so the printed page and a
-    shared link are always the same card. Absent means the whole session, which makes the
-    plain URL the full card it already was.
-  */
+  // Scope lives in the URL rather than in component state so the printed page and a
+  // shared link are always the same card. Resolved below, once settings are in.
   const [searchParams, setSearchParams] = useSearchParams();
-  const examParam = searchParams.get('exam');
-  const scope: ExamCode | null = EXAM_CODES.includes(examParam as ExamCode)
-    ? (examParam as ExamCode)
-    : null;
 
   // Reached from the gradebook and from a student's record, so a fixed destination would
   // be wrong from one of them. 'default' means the app was loaded here — a printed card's
@@ -51,7 +46,20 @@ export function ReportCardPage() {
     queryKey: academicKeys.student(studentId),
     queryFn: () => academicsApi.student(studentId),
   });
-  const settings = useQuery({ queryKey: settingsKeys.all, queryFn: settingsApi.get });
+  const settings = useQuery({ queryKey: settingsKeys.school, queryFn: settingsApi.school });
+
+  /*
+    A URL that does not name a paper opens on whichever the school has chosen in Settings,
+    so the card someone prints most often is the one a bare link gives them.
+
+    The factory default stands in while settings are loading. That window is behind the
+    spinner below, so nothing is drawn from it — but `scope` feeds the document title
+    effect, which does run, and a value it can use is better than a conditional hook.
+  */
+  const scope = scopeFromParam(
+    searchParams.get('exam'),
+    settings.data?.defaultReportScope ?? DEFAULT_REPORT_SCOPE,
+  );
 
   // Becomes the default PDF filename when printed to file.
   useEffect(() => {
@@ -63,11 +71,27 @@ export function ReportCardPage() {
     };
   }, [studentId, academicYear, scope]);
 
-  if (history.isPending || settings.isPending || !settings.data) return <LoadingBlock />;
-  if (history.error)
+  if (history.isPending || settings.isPending) return <LoadingBlock />;
+
+  /*
+    Both halves are needed to draw a card, so both are reported the same way.
+
+    Written as one guard rather than a spinner condition and an error condition, because
+    splitting them is what left a teacher staring at a spinner for ever: `!settings.data`
+    sat in the loading test, and a request that had *failed* satisfies it just as well as
+    one still in flight. A settled query with no data is a failure, not a wait.
+  */
+  const failure = history.error ?? settings.error;
+  if (failure || !history.data || !settings.data)
     return (
       <div className="p-4 sm:p-6">
-        <ErrorBlock message={(history.error as Error).message} />
+        <ErrorBlock
+          message={(failure as Error | undefined)?.message ?? 'Could not load this report card.'}
+          onRetry={() => {
+            void history.refetch();
+            void settings.refetch();
+          }}
+        />
       </div>
     );
 
@@ -105,15 +129,17 @@ export function ReportCardPage() {
           <Select
             id="report-scope"
             className="w-44"
-            value={scope ?? ''}
+            value={scopeToParam(scope)}
             onChange={(event) => {
-              const next = event.target.value;
+              // Always written, never dropped: an absent parameter means the school's
+              // default now, so clearing it would be a way of choosing that rather than
+              // "all papers".
               // `replace` so flicking through papers does not bury the page you arrived
               // from under six history entries.
-              setSearchParams(next ? { exam: next } : {}, { replace: true });
+              setSearchParams({ exam: event.target.value }, { replace: true });
             }}
           >
-            <option value="">Full session</option>
+            <option value={FULL_SESSION}>Full session</option>
             {EXAM_CODES.map((code) => (
               <option key={code} value={code}>
                 {EXAM_LABELS[code]}

@@ -161,6 +161,41 @@ export const EXAM_LABELS: Record<ExamCode, string> = {
 };
 
 /**
+ * "Every paper" — the one report-card scope that is not an exam.
+ *
+ * Deliberately in the same vocabulary as `EXAM_CODES` rather than being expressed as an
+ * absence, because three places have to agree on it: the `?exam=` value in a card's URL,
+ * the option in the print dialog, and the default stored in settings. Written as an
+ * absent parameter instead, "the whole session" and "whatever the school chose" would be
+ * the same URL and one of them would have to lose.
+ */
+export const FULL_SESSION = 'ALL' as const;
+
+/** What a report card may cover: every paper, or one of them. */
+export const REPORT_SCOPE_CODES = [FULL_SESSION, ...EXAM_CODES] as const;
+export type ReportScopeCode = (typeof REPORT_SCOPE_CODES)[number];
+
+export const REPORT_SCOPE_LABELS: Record<ReportScopeCode, string> = {
+  [FULL_SESSION]: 'Full session',
+  ...EXAM_LABELS,
+};
+
+/**
+ * What a report card opens on before anyone has chosen — the factory setting behind the
+ * `defaultReportScope` in settings.
+ *
+ * The whole session, because that is the card that is right all year: every paper sat so
+ * far, with the rest as dashes. A single paper is the better default only once a school
+ * knows which one it hands out, and that is exactly the judgement the setting exists to
+ * capture — so it is asked for rather than assumed.
+ *
+ * It is used three times over and must be one value: as the model's default for a fresh
+ * install, as what an older settings document missing the field reads as, and as what the
+ * browser assumes while settings are still loading.
+ */
+export const DEFAULT_REPORT_SCOPE: ReportScopeCode = FULL_SESSION;
+
+/**
  * The subjects a class is **marked** on, in the order they appear on the mark sheet.
  * Graded subjects are a separate list — see `GRADED_SUBJECT_CODES` below.
  *

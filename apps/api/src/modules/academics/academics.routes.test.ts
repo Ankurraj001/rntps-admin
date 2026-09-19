@@ -932,6 +932,39 @@ describe('authorisation', () => {
     expect(res.body.items[0].classCode).toBe('5');
   });
 
+  /*
+    A card filed under one class while the student sits in another is the case the
+    move-class feature exists for, and the class filter has to answer it the same way from
+    either side: the marks are on the filing class's page, and the new class sees nothing
+    at all — not a blank row, which would offer a card that PUT /marks then refuses.
+  */
+  it('keeps a misfiled card on the filing class\'s gradebook', async () => {
+    const [studentId] = await seedClass('5', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, { UT1: everySubject('5', 16) }).expect(200);
+    await Student.updateOne({ _id: studentId }, { $set: { classCode: '6' } });
+    const { header } = await teacherAuth(['5']);
+
+    const res = await request(app).get('/api/v1/academics').set('Authorization', header).expect(200);
+    expect(res.body.total).toBe(1);
+    expect(res.body.items[0]).toMatchObject({
+      studentId,
+      classCode: '5',
+      currentClassCode: '6',
+      hasRecord: true,
+    });
+  });
+
+  it('keeps a misfiled card off the gradebook of the class the student moved to', async () => {
+    const [studentId] = await seedClass('5', ['Aarav Sharma']);
+    await saveMarks(adminHeader, studentId!, { UT1: everySubject('5', 16) }).expect(200);
+    await Student.updateOne({ _id: studentId }, { $set: { classCode: '6' } });
+    const { header } = await teacherAuth(['6']);
+
+    // On class 6's roll, but their marks are not — so no row, blank or otherwise.
+    const res = await request(app).get('/api/v1/academics').set('Authorization', header).expect(200);
+    expect(res.body.total).toBe(0);
+  });
+
   it('refuses, rather than silently empties, a teacher asking for another class', async () => {
     await seedClass('6', ['Kabir Nair']);
     const { header } = await teacherAuth(['5']);

@@ -1,3 +1,8 @@
+import {
+  DEFAULT_REPORT_SCOPE,
+  REPORT_SCOPE_CODES,
+  type ReportScopeCode,
+} from '@rntps/shared';
 import { Schema, model, type HydratedDocument } from 'mongoose';
 
 export const SETTINGS_ID = 'app';
@@ -10,6 +15,14 @@ export interface SettingsDoc {
   activeAcademicYear: string;
   studentIdPrefix: string;
   feeDueDayOfMonth: number;
+  /**
+   * Which paper a report card opens on, `ALL` being the whole session.
+   *
+   * Absent on a settings document written before this existed, which is why every reader
+   * falls back to `DEFAULT_REPORT_SCOPE` rather than trusting the model default — a
+   * default only applies when a document is created, and this one already exists.
+   */
+  defaultReportScope: ReportScopeCode;
   counters: { student: number; receipt: number; family: number };
   holidays: { dateKey: string; label: string }[];
   templates: { key: string; name: string; body: string; isActive: boolean }[];
@@ -30,6 +43,11 @@ const settingsSchema = new Schema<SettingsDoc>(
     activeAcademicYear: { type: String, required: true },
     studentIdPrefix: { type: String, default: 'RNTPS', uppercase: true, trim: true },
     feeDueDayOfMonth: { type: Number, default: 10, min: 1, max: 28 },
+    defaultReportScope: {
+      type: String,
+      enum: REPORT_SCOPE_CODES,
+      default: DEFAULT_REPORT_SCOPE,
+    },
     counters: {
       student: { type: Number, default: 0, min: 0 },
       receipt: { type: Number, default: 0, min: 0 },

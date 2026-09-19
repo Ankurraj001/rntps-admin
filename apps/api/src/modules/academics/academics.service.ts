@@ -156,6 +156,28 @@ function sortRows(rows: AcademicRow[], sort: ListAcademicsQuery['sort'], order: 
 }
 
 /**
+ * Students whose card for this session is filed under a class the caller is not looking at.
+ *
+ * Only the ids, because that is the whole question: *which* class it sits in is that
+ * class's page to answer. It exists so the roster half of the union below can leave those
+ * students out. They may well be on this class's roll — a child moved in November is
+ * exactly that — but their marks are not, and a blank row here would offer a teacher a
+ * card that `saveExamResult` will refuse, because the class that governs the save comes
+ * from the snapshot rather than the roll.
+ *
+ * Nothing to ask when the caller is an admin looking at every class at once: no card can
+ * be filed somewhere that is not already on the page.
+ */
+async function cardsFiledElsewhere(academicYear: string, scope?: string[]): Promise<Set<string>> {
+  if (!scope) return new Set();
+  const ids = await ExamResult.distinct('studentId', {
+    academicYear,
+    classCodeSnapshot: { $nin: scope },
+  });
+  return new Set(ids as string[]);
+}
+
+/**
  * The gradebook for one session.
  *
  * Rows are the union of two sources, keyed by studentId:
@@ -173,7 +195,8 @@ function sortRows(rows: AcademicRow[], sort: ListAcademicsQuery['sort'], order: 
  *
  * Composed in memory rather than in an aggregation because the two sources cannot be
  * sorted together in the database, and this is a single school: one session is a few
- * hundred lean documents. The attendance roster joins the same way.
+ * hundred lean documents. The attendance roster joins the same way. Which *class* the page
+ * covers is not decided in memory, though — see below.
  */
 export async function listAcademics(
   query: ListAcademicsQuery,
@@ -183,26 +206,66 @@ export async function listAcademics(
   const academicYear = query.academicYear ?? settings.activeAcademicYear;
 
   /*
-    Sequential rather than parallel, because the second query needs the first's ids.
+    Which classes this page may show: the one asked for, or — when none was — a teacher's
+    own. Undefined is an admin looking at every class, which needs no filter at all.
+
+    A classCode reaching here is one this caller may see either way: the route refuses a
+    teacher who names a class they are not assigned to, rather than quietly emptying the
+    page. So narrowing to it cannot widen anything.
+
+    This is pushed into the two queries below rather than applied to the rows afterwards,
+    which is where it used to live. Filtering in memory meant opening one class read every
+    marks document in the school for the session and then discarded most of them — and
+    left the second key of `{academicYear, classCodeSnapshot}` never once exercised by the
+    query that index was added for.
+  */
+  const scope = query.classCode ? [query.classCode] : allowedClasses;
+
+  const [records, filedElsewhere] = await Promise.all([
+    ExamResult.find({
+      academicYear,
+      ...(scope ? { classCodeSnapshot: { $in: scope } } : {}),
+    }).lean<ExamResultDoc[]>(),
+    cardsFiledElsewhere(academicYear, scope),
+  ]);
+
+  /*
+    Sequential rather than parallel, because this query needs the ids above.
 
     The union has to include students who are *not* on this session's roll but do have a
     record for it — the promoted and the departed — or a card printed for a closed session
     would have no guardian to name on it. The snapshots on the record carry the class and
-    roll, but a guardian was never snapshotted and is read live.
+    roll, but a guardian was never snapshotted and is read live. That second branch is why
+    the class filter on the first one is safe: a student whose card is on this page is
+    fetched by their card, whatever class they have since moved to.
 
     One session is a few hundred lean documents in a single school, so the extra round trip
     costs nothing worth restructuring for.
   */
-  const records = await ExamResult.find({ academicYear }).lean<ExamResultDoc[]>();
   const students = await Student.find({
-    $or: [{ academicYear, status: 'ACTIVE' }, { _id: { $in: records.map((r) => r.studentId) } }],
+    $or: [
+      { academicYear, status: 'ACTIVE', ...(scope ? { classCode: { $in: scope } } : {}) },
+      { _id: { $in: records.map((r) => r.studentId) } },
+    ],
   })
     .select('fullName classCode rollNo guardians')
     .lean<RosterStudent[]>();
 
+  const studentById = new Map(students.map((s) => [s._id, s]));
+  const withCard = new Set(records.map((r) => r.studentId));
+  // Only the session in progress can be out of step. In a closed one the live class
+  // differing from the snapshot is not a mistake, it is what the snapshot is for.
+  const isOpenSession = academicYear === settings.activeAcademicYear;
+
   const byStudent = new Map<string, AcademicRow>();
 
   for (const student of students) {
+    // A student with a card is described by their card, in the loop below — building a
+    // blank row here first and overwriting it a moment later was two full sets of marks
+    // and grades allocated per student to keep one. And a student whose card is filed
+    // under another class belongs on that class's page, not on this one.
+    if (withCard.has(student._id) || filedElsewhere.has(student._id)) continue;
+
     byStudent.set(student._id, {
       studentId: student._id,
       fullName: student.fullName,
@@ -219,18 +282,12 @@ export async function listAcademics(
     });
   }
 
-  const guardianById = new Map(students.map((s) => [s._id, cardGuardianOf(s.guardians)]));
-  const liveClassById = new Map(students.map((s) => [s._id, s.classCode]));
-  // Only the session in progress can be out of step. In a closed one the live class
-  // differing from the snapshot is not a mistake, it is what the snapshot is for.
-  const isOpenSession = academicYear === settings.activeAcademicYear;
-
   for (const record of records) {
-    const enrolled = byStudent.get(record.studentId);
+    const live = studentById.get(record.studentId);
     byStudent.set(record.studentId, {
       studentId: record.studentId,
       // A student still on the roll may have been renamed since; show the current name.
-      fullName: enrolled?.fullName ?? record.studentNameSnapshot,
+      fullName: live?.fullName ?? record.studentNameSnapshot,
       // The class and roll are the session's, so the snapshot wins over the live record.
       classCode: record.classCodeSnapshot,
       rollNo: record.rollNoSnapshot,
@@ -238,12 +295,8 @@ export async function listAcademics(
       scores: toScores(record.scores),
       subjectMarks: toSubjectMarks(record.subjectMarks),
       subjectGrades: toSubjectGrades(record.subjectGrades),
-      guardian: guardianById.get(record.studentId) ?? null,
-      currentClassCode: mismatchedClass(
-        isOpenSession,
-        record.classCodeSnapshot,
-        liveClassById.get(record.studentId),
-      ),
+      guardian: cardGuardianOf(live?.guardians),
+      currentClassCode: mismatchedClass(isOpenSession, record.classCodeSnapshot, live?.classCode),
       hasRecord: true,
       updatedAt: record.updatedAt?.toISOString() ?? null,
     });
@@ -251,14 +304,9 @@ export async function listAcademics(
 
   let rows = [...byStudent.values()];
 
-  // A teacher sees only their own classes, whether or not they named one.
-  if (allowedClasses) {
-    const allowed = new Set(allowedClasses);
-    rows = rows.filter((row) => allowed.has(row.classCode));
-  }
-  if (query.classCode) {
-    rows = rows.filter((row) => row.classCode === query.classCode);
-  }
+  // Name and ID search stays here: it has to match the snapshot on an archived row as
+  // readily as the live record on a current one, which is a property of the composed row
+  // rather than of either collection.
   if (query.q) {
     const pattern = new RegExp(escapeRegex(query.q), 'i');
     rows = rows.filter((row) => pattern.test(row.fullName) || pattern.test(row.studentId));
@@ -410,9 +458,10 @@ export async function saveExamResult(
   payload: SaveExamResultPayload,
   actor: Actor,
 ): Promise<AcademicRow> {
-  const settings = await getSettings();
-
-  const [student, existing] = await Promise.all([
+  // Settings joins the same round trip as the other two rather than preceding them: no
+  // part of either query depends on it, so awaiting it first only bought a second wait.
+  const [settings, student, existing] = await Promise.all([
+    getSettings(),
     Student.findById(payload.studentId)
       .select('fullName classCode rollNo guardians')
       .lean<RosterStudent>(),
@@ -591,9 +640,10 @@ export async function moveCardToCurrentClass(
   actorId: string,
 ): Promise<AcademicRow> {
   const id = studentId.toUpperCase();
-  const settings = await getSettings();
 
-  const [student, record] = await Promise.all([
+  // One round trip, for the reason given in `saveExamResult`.
+  const [settings, student, record] = await Promise.all([
+    getSettings(),
     Student.findById(id).select('fullName classCode rollNo guardians').lean<RosterStudent>(),
     ExamResult.findById(examResultId(id, academicYear)).lean<ExamResultDoc>(),
   ]);

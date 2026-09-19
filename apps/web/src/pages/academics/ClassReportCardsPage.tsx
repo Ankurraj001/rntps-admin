@@ -1,9 +1,9 @@
 import {
+  DEFAULT_REPORT_SCOPE,
   EXAM_CODES,
   EXAM_LABELS,
   classLabel,
   type AcademicRow,
-  type ExamCode,
   type StudentExamYear,
 } from '@rntps/shared';
 import { useQuery } from '@tanstack/react-query';
@@ -15,6 +15,7 @@ import { settingsApi, settingsKeys } from '@/api/settings';
 import { ReportCardSheet } from '@/components/academics/ReportCardSheet';
 import { Button } from '@/components/ui/Button';
 import { EmptyState, ErrorBlock, LoadingBlock } from '@/components/ui/Feedback';
+import { scopeFromParam } from '@/lib/reportScope';
 
 /** A class is a few dozen students; the ceiling the list endpoint allows covers any of them. */
 const CLASS_LIMIT = 200;
@@ -34,11 +35,6 @@ export function ClassReportCardsPage() {
   const [searchParams] = useSearchParams();
 
   const classCode = searchParams.get('classCode') ?? '';
-  const examParam = searchParams.get('exam');
-  const scope: ExamCode | null = EXAM_CODES.includes(examParam as ExamCode)
-    ? (examParam as ExamCode)
-    : null;
-  const columns = scope === null ? [...EXAM_CODES] : [scope];
 
   const canGoBack = location.key !== 'default';
   const goBack = () => (canGoBack ? navigate(-1) : navigate('/academics'));
@@ -55,7 +51,15 @@ export function ClassReportCardsPage() {
     queryKey: academicKeys.list(params),
     queryFn: () => academicsApi.list(params),
   });
-  const settings = useQuery({ queryKey: settingsKeys.all, queryFn: settingsApi.get });
+  const settings = useQuery({ queryKey: settingsKeys.school, queryFn: settingsApi.school });
+
+  // Read the same way the single-student card reads it, down to the configured default,
+  // so one shared link and the other cannot disagree about what a missing `exam` means.
+  const scope = scopeFromParam(
+    searchParams.get('exam'),
+    settings.data?.defaultReportScope ?? DEFAULT_REPORT_SCOPE,
+  );
+  const columns = scope === null ? [...EXAM_CODES] : [scope];
 
   // Becomes the default PDF filename when printed to file.
   useEffect(() => {
@@ -67,11 +71,24 @@ export function ClassReportCardsPage() {
     };
   }, [classCode, academicYear, scope]);
 
-  if (list.isPending || settings.isPending || !settings.data) return <LoadingBlock />;
-  if (list.error)
+  if (list.isPending || settings.isPending) return <LoadingBlock />;
+
+  /*
+    One guard for both halves, for the reason spelled out on the single-card page: a
+    settled query with no data is a failure, and testing `!settings.data` as part of the
+    *loading* condition reported it as a wait that never ended.
+  */
+  const failure = list.error ?? settings.error;
+  if (failure || !list.data || !settings.data)
     return (
       <div className="p-4 sm:p-6">
-        <ErrorBlock message={(list.error as Error).message} onRetry={() => void list.refetch()} />
+        <ErrorBlock
+          message={(failure as Error | undefined)?.message ?? 'Could not load these report cards.'}
+          onRetry={() => {
+            void list.refetch();
+            void settings.refetch();
+          }}
+        />
       </div>
     );
 

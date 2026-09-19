@@ -1,6 +1,14 @@
-import { EXAM_CODES, EXAM_LABELS, classLabel } from '@rntps/shared';
+import {
+  DEFAULT_REPORT_SCOPE,
+  REPORT_SCOPE_CODES,
+  REPORT_SCOPE_LABELS,
+  classLabel,
+  type ReportScopeCode,
+} from '@rntps/shared';
+import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { settingsApi, settingsKeys } from '@/api/settings';
 import { Button } from '@/components/ui/Button';
 import { Field, Select } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
@@ -26,12 +34,23 @@ export function PrintResultsModal({
   onClose: () => void;
 }) {
   const navigate = useNavigate();
+  const settings = useQuery({ queryKey: settingsKeys.school, queryFn: settingsApi.school });
   const [classCode, setClassCode] = useState(defaultClassCode || (classes[0] ?? ''));
-  const [exam, setExam] = useState('');
+
+  /*
+    Null until the admin picks one, resolved on every render rather than seeded into state.
+
+    The dialog opens on whichever paper the school has configured, and that may still be
+    in flight when it mounts — a `useState` seeded from it would keep whatever was known
+    at that instant and never pick up the answer.
+  */
+  const [exam, setExam] = useState<ReportScopeCode | null>(null);
+  const selected = exam ?? settings.data?.defaultReportScope ?? DEFAULT_REPORT_SCOPE;
 
   function handlePrint() {
-    const query = new URLSearchParams({ classCode });
-    if (exam) query.set('exam', exam);
+    // Always sent, including for the whole session: the page it opens reads a missing
+    // parameter as the school's default rather than as all six papers.
+    const query = new URLSearchParams({ classCode, exam: selected });
     navigate(`/academics/report-cards/${encodeURIComponent(academicYear)}?${query.toString()}`);
   }
 
@@ -62,11 +81,14 @@ export function PrintResultsModal({
           htmlFor="print-exam"
           hint="A paper nobody has sat yet prints as dashes."
         >
-          <Select id="print-exam" value={exam} onChange={(event) => setExam(event.target.value)}>
-            <option value="">Full session</option>
-            {EXAM_CODES.map((code) => (
+          <Select
+            id="print-exam"
+            value={selected}
+            onChange={(event) => setExam(event.target.value as ReportScopeCode)}
+          >
+            {REPORT_SCOPE_CODES.map((code) => (
               <option key={code} value={code}>
-                {EXAM_LABELS[code]}
+                {REPORT_SCOPE_LABELS[code]}
               </option>
             ))}
           </Select>
