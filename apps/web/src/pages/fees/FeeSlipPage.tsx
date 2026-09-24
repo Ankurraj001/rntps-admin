@@ -60,7 +60,7 @@ export function FeeSlipPage() {
     slip.data;
 
   return (
-    <div className="mx-auto max-w-2xl p-4 sm:p-6">
+    <div className="mx-auto max-w-2xl p-4 sm:p-6 print:max-w-none print:p-0">
       <div className="mb-4 flex justify-between print:hidden">
         <Button variant="ghost" onClick={goBack}>
           <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -72,7 +72,7 @@ export function FeeSlipPage() {
         </Button>
       </div>
 
-      <article className="rounded-lg border border-slate-300 bg-white p-8 print:border-0 print:p-0">
+      <article className="print-page rounded-lg border border-slate-300 bg-white p-8 print:border-0">
         <header className="border-b-2 border-slate-800 pb-4 text-center">
           <h1 className="text-xl font-bold uppercase tracking-wide text-slate-900">
             {school.schoolName}

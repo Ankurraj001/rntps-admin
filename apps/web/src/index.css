@@ -66,8 +66,29 @@ body {
     display: none !important;
   }
 
+  /*
+   * No page margin, on purpose.
+   *
+   * The date, document title, URL and page number a browser stamps around a printed sheet
+   * are drawn *inside* the page margin, and no CSS addresses them directly — leaving no
+   * margin for them to sit in is the only way to suppress them, and it is what Chrome and
+   * Firefox both key off. (Choosing a margin by hand in the print dialog overrides this and
+   * brings them back, which is the person at the printer's decision to make, not the app's.)
+   */
   @page {
     size: A4;
-    margin: 16mm;
+    margin: 0;
+  }
+
+  /*
+   * The whitespace the page margin used to provide, re-created inside the document.
+   *
+   * Belongs on whatever element becomes one printed sheet — a report card, a receipt —
+   * rather than on the page wrapper around them, because a wrapper's padding is applied
+   * once to the whole flow: a class's worth of cards would come out with a top margin on
+   * the first sheet and none on any of the rest.
+   */
+  .print-page {
+    padding: 16mm;
   }
 }

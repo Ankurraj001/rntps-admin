@@ -100,7 +100,7 @@ export function ClassReportCardsPage() {
   const skipped = list.data.items.filter((row) => !row.hasRecord);
 
   return (
-    <div className="mx-auto max-w-3xl p-4 sm:p-6">
+    <div className="mx-auto max-w-3xl p-4 sm:p-6 print:p-0">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Button variant="ghost" onClick={goBack}>
           <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -138,7 +138,9 @@ export function ClassReportCardsPage() {
             <div
               key={row.studentId}
               // A page each, except the last — a trailing break prints a blank sheet.
-              className={index === withCards.length - 1 ? undefined : 'break-after-page'}
+              className={
+                index === withCards.length - 1 ? 'print-page' : 'print-page break-after-page'
+              }
             >
               <ReportCardSheet
                 school={school}

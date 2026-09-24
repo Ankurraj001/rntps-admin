@@ -116,19 +116,21 @@ export function ReportCardPage() {
   const nothingToSend = scope === null ? marked.length === 0 : !marked.includes(scope);
 
   return (
-    <div className="mx-auto max-w-3xl p-4 sm:p-6">
+    <div className="mx-auto max-w-3xl p-4 sm:p-6 print:p-0">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Button variant="ghost" onClick={goBack}>
           <ArrowLeft className="h-4 w-4" aria-hidden />
           Back
         </Button>
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Its own row on a phone, where a 176px dropdown plus two buttons cannot share
+            one: the picker takes the width it needs and the buttons wrap beneath it. */}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <label htmlFor="report-scope" className="text-sm text-slate-600">
             Show
           </label>
           <Select
             id="report-scope"
-            className="w-44"
+            className="min-w-40 flex-1 sm:w-44 sm:flex-none"
             value={scopeToParam(scope)}
             onChange={(event) => {
               // Always written, never dropped: an absent parameter means the school's
@@ -158,14 +160,16 @@ export function ReportCardPage() {
           </Button>
         </div>
       </div>
-      <ReportCardSheet
-        school={school}
-        studentName={history.data.fullName}
-        guardian={history.data.guardian}
-        year={year}
-        columns={columns}
-        scope={scope}
-      />
+      <div className="print-page">
+        <ReportCardSheet
+          school={school}
+          studentName={history.data.fullName}
+          guardian={history.data.guardian}
+          year={year}
+          columns={columns}
+          scope={scope}
+        />
+      </div>
     </div>
   );
 }

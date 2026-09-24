@@ -11,7 +11,7 @@ import {
   type SchoolInfoDto,
   type StudentExamYear,
 } from '@rntps/shared';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 /**
  * Where the school crest lives. Dropped in `apps/web/public/`, so it is served as-is and
@@ -35,6 +35,20 @@ function SectionHeading({ children }: { children: string }) {
       {children}
     </h2>
   );
+}
+
+/**
+ * The scroll box the two mark tables sit in.
+ *
+ * A full-session card is seven columns wide — a subject and six papers — which no phone
+ * fits. Rather than squeeze the columns into unreadable slivers, the table keeps the
+ * proportions it is designed to print at and the page offers it sideways below `sm`;
+ * a printed sheet measures ~794px, so print and desktop never take this branch.
+ *
+ * `relative` is the house rule for any `overflow-*` wrapper — see the note in index.css.
+ */
+function TableScroller({ children }: { children: ReactNode }) {
+  return <div className="relative overflow-x-auto sm:overflow-x-visible">{children}</div>;
 }
 
 /** A label-and-value pair from the identity block. */
@@ -81,18 +95,22 @@ export function ReportCardSheet({
   const subjects = subjectsForClass(year.classCode);
   const totals = columns.map((code) => examTotal(year.subjectMarks[code], year.classCode, code));
 
+  // Only a multi-paper card is wide enough to be worth scrolling: a single result is two
+  // columns and fits a phone as it stands, so it is left to fill the width instead.
+  const minTableWidth = columns.length > 1 ? 'max-sm:min-w-[30rem]' : '';
+
   return (
     <article
       className={`overflow-hidden rounded-lg border-2 border-blue-900 bg-white shadow-sm print:rounded-none print:shadow-none ${PRINT_EXACT}`}
     >
-      <header className="flex items-center gap-5 px-6 pt-6 pb-4 sm:px-8">
+      <header className="flex flex-col items-center gap-3 px-4 pt-5 pb-4 sm:flex-row sm:gap-5 sm:px-8 sm:pt-6">
         {!logoFailed && (
           <img
             src={LOGO_SRC}
             alt=""
             aria-hidden
             onError={() => setLogoFailed(true)}
-            className="h-24 w-24 shrink-0 object-contain sm:h-28 sm:w-28"
+            className="h-16 w-16 shrink-0 object-contain sm:h-28 sm:w-28"
           />
         )}
         <div className="min-w-0 flex-1 text-center">
@@ -103,8 +121,12 @@ export function ReportCardSheet({
               "R N Tagore Public School" measures 348px at 24px, so there is room to
               spare; at 30px it measures 435px, which fits by one pixel and would wrap on
               any name a character longer. Hence 24px rather than the 30px the heading
-              would otherwise take. */}
-          <h1 className="whitespace-nowrap text-2xl font-bold uppercase tracking-wide text-blue-900">
+              would otherwise take.
+
+              A phone has none of that room, so below `sm` the name is smaller and may
+              wrap. The card that gets printed is unaffected: a page is ~794px wide, well
+              past the `sm` breakpoint. */}
+          <h1 className="text-lg font-bold uppercase tracking-wide text-blue-900 sm:whitespace-nowrap sm:text-2xl">
             {school.schoolName}
           </h1>
           {school.schoolAddress && (
@@ -125,14 +147,14 @@ export function ReportCardSheet({
           <p className="mt-2 text-sm font-medium text-slate-700">Session {year.academicYear}</p>
         </div>
         {/* Balances the crest so the name block stays optically centred. */}
-        {!logoFailed && <div className="hidden h-24 w-24 shrink-0 sm:block sm:h-28 sm:w-28" aria-hidden />}
+        {!logoFailed && <div className="hidden shrink-0 sm:block sm:h-28 sm:w-28" aria-hidden />}
       </header>
 
-      <div className="px-6 sm:px-8">
+      <div className="px-4 sm:px-8">
         <div className="border-t-2 border-blue-900" />
       </div>
 
-      <dl className="grid gap-x-10 gap-y-2.5 px-6 py-5 text-sm sm:grid-cols-2 sm:px-8">
+      <dl className="grid gap-x-10 gap-y-2 px-4 py-4 text-sm sm:grid-cols-2 sm:gap-y-2.5 sm:px-8 sm:py-5">
         <Detail label="Name" value={studentName} />
         <Detail label="Class" value={classLabel(year.classCode)} />
         {/* "Parent's Name" rather than the relation: it reads correctly whether the
@@ -141,144 +163,159 @@ export function ReportCardSheet({
         <Detail label="Roll No" value={year.rollNo === null ? '—' : String(year.rollNo)} />
       </dl>
 
-      <div className="px-6 pb-2 sm:px-8">
+      <div className="px-4 pb-2 sm:px-8">
         <SectionHeading>Scholastic Assessment</SectionHeading>
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className={`bg-blue-900 text-xs uppercase tracking-wide text-white ${PRINT_EXACT}`}>
-              <th scope="col" className="border border-blue-900 px-3 py-2 text-left font-semibold">
-                Subject
-              </th>
-              {columns.map((code) => (
+        <TableScroller>
+          <table className={`w-full border-collapse text-xs sm:text-sm ${minTableWidth}`}>
+            <thead>
+              <tr
+                className={`bg-blue-900 text-xs uppercase tracking-wide text-white ${PRINT_EXACT}`}
+              >
                 <th
-                  key={code}
                   scope="col"
-                  className="border border-blue-900 px-2 py-2 text-center font-semibold"
+                  className="border border-blue-900 px-3 py-2 text-left font-semibold"
                 >
-                  {EXAM_LABELS[code]}
-                  <span className="block text-[10px] font-normal normal-case text-blue-100">
-                    out of {MAX_SUBJECT_MARK[code]}
-                  </span>
+                  Subject
                 </th>
-              ))}
-            </tr>
-          </thead>
-
-          <tbody>
-            {subjects.map((subject, index) => (
-              <tr key={subject} className={index % 2 === 1 ? `bg-slate-50 ${PRINT_EXACT}` : undefined}>
-                <th
-                  scope="row"
-                  className="border border-slate-300 px-3 py-1.5 text-left font-normal text-slate-800"
-                >
-                  {SUBJECT_LABELS[subject]}
-                </th>
-                {columns.map((code) => {
-                  const mark = year.subjectMarks[code][subject];
-                  return (
-                    <td
-                      key={code}
-                      className={`border border-slate-300 px-2 py-1.5 text-center tabular-nums ${
-                        mark === null ? 'text-slate-400' : 'text-slate-900'
-                      }`}
-                    >
-                      {mark ?? '—'}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-
-          <tfoot>
-            <tr className={`bg-slate-100 font-semibold text-slate-900 ${PRINT_EXACT}`}>
-              <th scope="row" className="border border-slate-400 px-3 py-2 text-left">
-                Total
-              </th>
-              {totals.map((total, index) => (
-                <td
-                  key={columns[index]}
-                  className="border border-slate-400 px-2 py-2 text-center tabular-nums"
-                >
-                  {total ? `${total.obtained}/${total.max}` : '—'}
-                </td>
-              ))}
-            </tr>
-            <tr className={`bg-blue-50 font-bold text-blue-900 ${PRINT_EXACT}`}>
-              <th scope="row" className="border border-slate-400 px-3 py-2 text-left">
-                Percentage
-              </th>
-              {totals.map((total, index) => {
-                const code = columns[index]!;
-                // Falls back to the stored percentage for a paper recorded before
-                // subject-wise entry, which has no marks to add up.
-                const percent = total ? total.percent : year.scores[code];
-                return (
-                  <td
+                {columns.map((code) => (
+                  <th
                     key={code}
+                    scope="col"
+                    className="border border-blue-900 px-2 py-2 text-center font-semibold"
+                  >
+                    {EXAM_LABELS[code]}
+                    <span className="block text-[10px] font-normal normal-case text-blue-100">
+                      out of {MAX_SUBJECT_MARK[code]}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody>
+              {subjects.map((subject, index) => (
+                <tr
+                  key={subject}
+                  className={index % 2 === 1 ? `bg-slate-50 ${PRINT_EXACT}` : undefined}
+                >
+                  <th
+                    scope="row"
+                    className="border border-slate-300 px-3 py-1.5 text-left font-normal text-slate-800"
+                  >
+                    {SUBJECT_LABELS[subject]}
+                  </th>
+                  {columns.map((code) => {
+                    const mark = year.subjectMarks[code][subject];
+                    return (
+                      <td
+                        key={code}
+                        className={`border border-slate-300 px-2 py-1.5 text-center tabular-nums ${
+                          mark === null ? 'text-slate-400' : 'text-slate-900'
+                        }`}
+                      >
+                        {mark ?? '—'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+
+            <tfoot>
+              <tr className={`bg-slate-100 font-semibold text-slate-900 ${PRINT_EXACT}`}>
+                <th scope="row" className="border border-slate-400 px-3 py-2 text-left">
+                  Total
+                </th>
+                {totals.map((total, index) => (
+                  <td
+                    key={columns[index]}
                     className="border border-slate-400 px-2 py-2 text-center tabular-nums"
                   >
-                    {percent === null ? '—' : `${percent.toFixed(2)}%`}
+                    {total ? `${total.obtained}/${total.max}` : '—'}
                   </td>
-                );
-              })}
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <div className="px-6 pb-5 pt-4 sm:px-8">
-        <SectionHeading>Co-Scholastic Assessment</SectionHeading>
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr
-              className={`bg-slate-100 text-xs uppercase tracking-wide text-slate-700 ${PRINT_EXACT}`}
-            >
-              <th scope="col" className="border border-slate-400 px-3 py-1.5 text-left font-semibold">
-                Area
-              </th>
-              {columns.map((code) => (
-                <th
-                  key={code}
-                  scope="col"
-                  className="border border-slate-400 px-2 py-1.5 text-center font-semibold"
-                >
-                  {EXAM_LABELS[code]}
+                ))}
+              </tr>
+              <tr className={`bg-blue-50 font-bold text-blue-900 ${PRINT_EXACT}`}>
+                <th scope="row" className="border border-slate-400 px-3 py-2 text-left">
+                  Percentage
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {GRADED_SUBJECT_CODES.map((subject) => (
-              <tr key={subject}>
-                <th
-                  scope="row"
-                  className="border border-slate-300 px-3 py-1.5 text-left font-normal text-slate-800"
-                >
-                  {SUBJECT_LABELS[subject]}
-                </th>
-                {columns.map((code) => {
-                  const grade = year.subjectGrades[code][subject];
+                {totals.map((total, index) => {
+                  const code = columns[index]!;
+                  // Falls back to the stored percentage for a paper recorded before
+                  // subject-wise entry, which has no marks to add up.
+                  const percent = total ? total.percent : year.scores[code];
                   return (
                     <td
                       key={code}
-                      className={`border border-slate-300 px-2 py-1.5 text-center uppercase ${
-                        grade === null ? 'text-slate-400' : 'font-medium text-slate-900'
-                      }`}
+                      className="border border-slate-400 px-2 py-2 text-center tabular-nums"
                     >
-                      {grade ?? '—'}
+                      {percent === null ? '—' : `${percent.toFixed(2)}%`}
                     </td>
                   );
                 })}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </tfoot>
+          </table>
+        </TableScroller>
       </div>
 
-      <div className="flex items-end justify-between gap-6 px-6 pb-6 pt-10 text-xs uppercase tracking-wide text-slate-600 sm:px-8">
+      <div className="px-4 pb-5 pt-4 sm:px-8">
+        <SectionHeading>Co-Scholastic Assessment</SectionHeading>
+        <TableScroller>
+          <table className={`w-full border-collapse text-xs sm:text-sm ${minTableWidth}`}>
+            <thead>
+              <tr
+                className={`bg-slate-100 text-xs uppercase tracking-wide text-slate-700 ${PRINT_EXACT}`}
+              >
+                <th
+                  scope="col"
+                  className="border border-slate-400 px-3 py-1.5 text-left font-semibold"
+                >
+                  Area
+                </th>
+                {columns.map((code) => (
+                  <th
+                    key={code}
+                    scope="col"
+                    className="border border-slate-400 px-2 py-1.5 text-center font-semibold"
+                  >
+                    {EXAM_LABELS[code]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {GRADED_SUBJECT_CODES.map((subject) => (
+                <tr key={subject}>
+                  <th
+                    scope="row"
+                    className="border border-slate-300 px-3 py-1.5 text-left font-normal text-slate-800"
+                  >
+                    {SUBJECT_LABELS[subject]}
+                  </th>
+                  {columns.map((code) => {
+                    const grade = year.subjectGrades[code][subject];
+                    return (
+                      <td
+                        key={code}
+                        className={`border border-slate-300 px-2 py-1.5 text-center uppercase ${
+                          grade === null ? 'text-slate-400' : 'font-medium text-slate-900'
+                        }`}
+                      >
+                        {grade ?? '—'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroller>
+      </div>
+
+      <div className="flex items-end justify-between gap-2 px-4 pb-5 pt-8 text-[10px] uppercase tracking-wide text-slate-600 sm:gap-6 sm:px-8 sm:pb-6 sm:pt-10 sm:text-xs">
         {['Class Teacher', 'Principal', 'Parent'].map((role) => (
-          <span key={role} className="w-28 border-t border-slate-500 pt-1 text-center">
+          <span key={role} className="w-24 border-t border-slate-500 pt-1 text-center sm:w-28">
             {role}
           </span>
         ))}
